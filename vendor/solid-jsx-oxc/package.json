@@ -1,0 +1,26 @@
+{
+  "name": "solid-jsx-oxc-monorepo",
+  "description": "High-performance OXC-based JSX compiler for SolidJS",
+  "version": "0.36.0",
+  "author": "Ryan Carniato",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ryansolid/solid-jsx-oxc"
+  },
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "examples/*"
+  ],
+  "scripts": {
+    "clean": "rimraf node_modules packages/*/node_modules packages/*/dist",
+    "test": "npm run test --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present",
+    "jsx-sync-types": "node packages/dom-expressions/src/jsx-update.mjs"
+  },
+  "devDependencies": {
+    "rimraf": "^5.0.0",
+    "typescript": "~5.3.3"
+  }
+}

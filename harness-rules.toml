@@ -1,0 +1,263 @@
+# harness-rules.toml - network policy for Harness Hat container sessions.
+# Commit this file to your repository. Harness Hat reads it but never pushes
+# changes back during workspace sync.
+#
+# Preferred place for human/LLM instructions:
+# llm_instructions = """
+# Environment:
+# - You are operating inside a Linux Docker container managed by Harness Hat.
+# - Your workspace is mounted into the container; edits usually persist to the host.
+# - Do not assume host tools, credentials, or services are directly available in the container.
+# - Use `killme` only when the user explicitly asks you to end this container.
+# """
+#
+# Hostdo (host-side command execution)
+#
+# default_policy: what happens when a command doesn't match any rule below.
+#   auto   — run without prompting (use with caution)
+#   prompt — ask the developer in the TUI (default)
+#   deny   — reject silently
+#
+# Passthrough command (exact argv match, auto-approved):
+#   [[hostdo.commands]]
+#   argv = ["cargo", "test"] # run inside container with `hostdo run cargo test`
+#   cwd = "$WORKSPACE"         # execution cwd only, not part of approval matching
+#   timeout_secs = 60
+#   approval_mode = "auto"
+#
+# Short-lived Docker runner (exact argv + image match, auto-approved):
+#   [[hostdo.commands]]
+#   argv = ["npm", "test"]   # run with `hostdo run --image node:20 npm test`
+#   image = "node:20"
+#   cwd = "$WORKSPACE"
+#   timeout_secs = 60
+#   approval_mode = "auto"
+#
+# $WORKSPACE = workspace path on the host.
+#
+# Network (HTTP/HTTPS proxy policy)
+#
+# Coder-style network rules. Deny matches win over allow matches; if no rule
+# matches, request is prompted.
+# Rule format:
+#   method=GET,POST domain=api.example.com path=/v1/*,/health port=443,8443
+#
+# Use [network].allowlist for permanent allows and [network].denylist for
+# permanent denies.
+#
+# Domain matching:
+# - `domain=example.com` exact only
+# - `domain=*.example.com` subdomains only (not the apex)
+#
+# Path matching:
+# - exact (`/v1/users`)
+# - wildcard (`/v1/*`)
+#
+# Port matching:
+# - omitted port matches normal HTTP/HTTPS requests on any port
+# - CONNECT allow rules without `port=` only auto-approve port 443
+# - raw CONNECT to other ports requires an explicit `port=...` allow rule
+
+version = 1
+
+[hostdo]
+default_policy = "prompt"
+
+[[hostdo.commands]]
+argv = [
+    "cargo",
+    "run",
+    "--example",
+    "offscreen_capture",
+    "--",
+    "--capture",
+    "captures/offscreen_capture.png",
+]
+cwd = "$WORKSPACE"
+timeout_secs = 120
+approval_mode = "auto"
+
+[[hostdo.commands]]
+argv = [
+    "cargo",
+    "run",
+    "--example",
+    "winit_window",
+    "--",
+    "--capture",
+    "captures/winit_window.png",
+]
+cwd = "$WORKSPACE"
+timeout_secs = 120
+approval_mode = "auto"
+
+[[hostdo.commands]]
+argv = [
+    "cargo",
+    "run",
+    "--example",
+    "winit_window",
+    "--features",
+    "with_system_fonts",
+    "--",
+    "--capture",
+    "captures/winit_window.png",
+]
+cwd = "$WORKSPACE"
+timeout_secs = 300
+approval_mode = "auto"
+
+[[hostdo.commands]]
+argv = [
+    "cargo",
+    "build",
+    "--examples",
+]
+cwd = "$WORKSPACE"
+timeout_secs = 600
+approval_mode = "auto"
+
+[[hostdo.commands]]
+argv = [
+    "cargo",
+    "run",
+    "--example",
+    "text_input",
+    "--",
+    "--capture",
+    "captures/text_input.png",
+]
+cwd = "$WORKSPACE"
+timeout_secs = 120
+approval_mode = "auto"
+
+[[hostdo.commands]]
+argv = [
+    "cargo",
+    "run",
+    "--example",
+    "two_instances",
+    "--",
+    "--capture",
+    "captures/two_instances.png",
+]
+cwd = "$WORKSPACE"
+timeout_secs = 120
+approval_mode = "auto"
+
+[[hostdo.commands]]
+argv = [
+    "cargo",
+    "run",
+    "--example",
+    "kitchen_sink",
+    "--",
+    "--capture",
+    "captures/kitchen_sink.png",
+]
+cwd = "$WORKSPACE"
+timeout_secs = 300
+approval_mode = "auto"
+
+[[hostdo.commands]]
+argv = [
+    "bash",
+    "-c",
+    "cd js && ./node_modules/.bin/esbuild runtime.ts --bundle --format=esm --outfile=dist/runtime.js",
+]
+cwd = "$WORKSPACE"
+timeout_secs = 60
+approval_mode = "auto"
+
+[[hostdo.commands]]
+argv = [
+    "bash",
+    "-c",
+    "cd js && rm -rf node_modules package-lock.json && npm install",
+]
+cwd = "$WORKSPACE"
+timeout_secs = 120
+approval_mode = "auto"
+
+[[hostdo.commands]]
+argv = [
+    "cargo",
+    "test",
+    "--lib",
+    "dispatch_wheel_with_reactive_effect",
+]
+cwd = "$WORKSPACE"
+timeout_secs = 300
+approval_mode = "auto"
+
+[[hostdo.commands]]
+argv = [
+    "cargo",
+    "test",
+    "--lib",
+]
+cwd = "$WORKSPACE"
+timeout_secs = 300
+approval_mode = "auto"
+
+[[hostdo.commands]]
+argv = [
+    "cargo",
+    "build",
+    "--example",
+    "kitchen_sink",
+]
+cwd = "$WORKSPACE"
+timeout_secs = 180
+approval_mode = "auto"
+
+[[hostdo.commands]]
+argv = [
+    "cargo",
+    "test",
+    "--lib",
+    "click_triggers_reactive_list_update",
+]
+cwd = "$WORKSPACE"
+timeout_secs = 300
+approval_mode = "auto"
+
+[[hostdo.commands]]
+argv = [
+    "cargo",
+    "test",
+    "--lib",
+    "dispatch_key_down_and_up_target_focused_node",
+    "--",
+    "--nocapture",
+]
+cwd = "$WORKSPACE"
+timeout_secs = 120
+approval_mode = "auto"
+
+[[hostdo.commands]]
+argv = [
+    "cargo",
+    "test",
+    "--lib",
+    "--",
+    "--test-threads=1",
+]
+cwd = "$WORKSPACE"
+timeout_secs = 300
+approval_mode = "auto"
+
+[network]
+allowlist = [
+    "domain=github.com",
+    "domain=api.github.com",
+    "domain=raw.githubusercontent.com",
+    "domain=objects.githubusercontent.com",
+    "domain=crates.io",
+    "domain=static.crates.io",
+    "domain=index.crates.io",
+    "domain=docs.rs",
+    "domain=registry.npmjs.org",
+    "domain=codeload.github.com",
+]
+denylist = ["domain=http-intake.logs.us5.datadoghq.com"]

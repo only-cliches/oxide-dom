@@ -1,0 +1,66 @@
+[package]
+name = "oxide-dom"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = ["with_system_fonts", "jsx-compiler"]
+with_system_fonts = ["blitz-dom/system_fonts"]
+jsx-compiler = [
+    "dep:oxc_allocator",
+    "dep:oxc_codegen",
+    "dep:oxc_diagnostics",
+    "dep:oxc_parser",
+    "dep:oxc_semantic",
+    "dep:oxc_span",
+    "dep:oxc_transformer",
+]
+
+[dependencies]
+blitz-dom = { version = "=0.3.0-alpha.4", path = "vendor/blitz/packages/blitz-dom", default-features = false, features = ["svg", "woff", "accessibility", "file_input", "custom-widget", "incremental"] }
+blitz-paint = { version = "=0.3.0-alpha.4", path = "vendor/blitz/packages/blitz-paint" }
+blitz-traits = { version = "=0.3.0-alpha.4", path = "vendor/blitz/packages/blitz-traits" }
+anyrender = "0.11"
+anyrender_vello = "0.11"
+kurbo = "0.13"
+peniko = "0.6"
+stylo = "0.18"
+style_dom = { version = "0.18", package = "stylo_dom" }
+wgpu = "29"
+rquickjs = { version = "0.9", features = ["loader", "macro"] }
+tokio = { version = "1", features = ["sync"] }
+serde_json = "1"
+notify = "6"
+oxc_allocator = { version = "0.135.0", optional = true }
+oxc_codegen = { version = "0.135.0", optional = true }
+oxc_diagnostics = { version = "0.135.0", optional = true }
+oxc_parser = { version = "0.135.0", optional = true }
+oxc_semantic = { version = "0.135.0", optional = true }
+oxc_span = { version = "0.135.0", optional = true }
+oxc_transformer = { version = "0.135.0", optional = true }
+
+[dev-dependencies]
+winit = "0.30"
+pollster = "0.4"
+image = "0.25"
+stylo = "0.18"
+
+[[example]]
+name = "winit_window"
+path = "examples/winit_window.rs"
+
+[[example]]
+name = "two_instances"
+path = "examples/two_instances.rs"
+
+[[example]]
+name = "text_input"
+path = "examples/text_input.rs"
+
+[[example]]
+name = "kitchen_sink"
+path = "examples/kitchen_sink.rs"
+
+[[example]]
+name = "offscreen_capture"
+path = "examples/offscreen_capture.rs"
