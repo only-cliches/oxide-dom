@@ -307,7 +307,9 @@ mod tests {
     async fn make_test_device() -> (Arc<wgpu::Device>, Arc<wgpu::Queue>) {
         if cfg!(target_os = "linux") {
             if std::env::var_os("XDG_RUNTIME_DIR").is_none() {
-                std::env::set_var("XDG_RUNTIME_DIR", "/tmp");
+                unsafe {
+                    std::env::set_var("XDG_RUNTIME_DIR", "/tmp");
+                }
             }
         }
 

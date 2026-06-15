@@ -793,7 +793,8 @@ mod tests {
         let doc = Rc::new(RefCell::new(BaseDocument::new(DocumentConfig::default())));
         let handlers = Rc::new(RefCell::new(HandlerMap::new()));
         let inputs = crate::input::new_registry();
-        let bridge = DomBridge::new(Rc::clone(&doc), Rc::clone(&handlers), inputs);
+        let selects = crate::select::new_registry();
+        let bridge = DomBridge::new(Rc::clone(&doc), Rc::clone(&handlers), inputs, selects);
         (doc, handlers, bridge)
     }
 

@@ -65,3 +65,7 @@ path = "examples/kitchen_sink.rs"
 [[example]]
 name = "offscreen_capture"
 path = "examples/offscreen_capture.rs"
+
+[[example]]
+name = "select_popup_capture"
+path = "examples/select_popup_capture.rs"

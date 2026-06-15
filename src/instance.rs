@@ -81,9 +81,6 @@ pub struct Instance {
     /// Host-supplied scrollbar theme override. When unset, scrollbar colours
     /// are derived per node from the container's computed `color` property.
     scrollbar_theme: Option<ScrollbarColors>,
-    /// Select popup geometries computed at the last `render()`. Reused by
-    /// `dispatch_mouse` for hit-testing popup options and handling selection.
-    select_popups: Vec<crate::select::SelectPopupGeometry>,
 }
 
 /// Watches a component source tree for filesystem changes.
@@ -212,7 +209,6 @@ impl Instance {
             scrollbars: Vec::new(),
             scrollbar_drag: None,
             scrollbar_theme: None,
-            select_popups: Vec::new(),
         };
 
         (instance, event_rx)
@@ -350,7 +346,6 @@ impl Instance {
             scrollbars: Vec::new(),
             scrollbar_drag: None,
             scrollbar_theme: None,
-            select_popups: Vec::new(),
         };
 
         (instance, event_rx)
@@ -450,11 +445,10 @@ impl Instance {
         // and scroll_offset are now current. Reused by `dispatch_mouse` for
         // scrollbar hit-testing this frame.
         self.scrollbars = collect_scrollbar_regions(&self.doc.borrow());
-        self.select_popups = self.collect_select_popups();
         let input_selections = self.collect_input_selections();
         let input_carets = self.collect_input_carets();
 
-        // Paint into the wgpu texture, layering scrollbars and popups on top.
+        // Paint into the wgpu texture, layering scrollbars on top.
         {
             let mut doc = self.doc.borrow_mut();
             let masked_focus = self.mask_blitz_text_input_focus_for_paint(&mut doc);
@@ -464,7 +458,6 @@ impl Instance {
                 &input_selections,
                 &input_carets,
                 self.scrollbar_theme,
-                &self.select_popups,
                 &self.texture,
             );
             self.restore_blitz_text_input_focus_after_paint(&mut doc, masked_focus);
@@ -699,19 +692,29 @@ impl Instance {
 
         match event {
             MouseEvent::Move { x, y } => {
-                // Update active option in open popups
-                for popup in &self.select_popups {
-                    if let Some(option_idx) = popup.option_at_point(x, y) {
-                        let mut selects = self.js.selects.borrow_mut();
-                        if let Some(state) = selects.get_mut(&popup.select_id) {
-                            state.set_active_index(Some(option_idx));
+                let old_hover_id = self.hovered_node_id;
+                let new_hover_id = self.hit_node_id(x, y);
+
+                // While a popup is open, hovering over an option updates the
+                // active-index highlight on that popup.
+                if let Some(hover_id) = new_hover_id {
+                    if let Some((sel_id, opt_idx)) = self.popup_option_for_hit(hover_id) {
+                        let changed = {
+                            let mut selects = self.js.selects.borrow_mut();
+                            match selects.get_mut(&sel_id) {
+                                Some(state) if state.active_index() != Some(opt_idx) => {
+                                    state.set_active_index(Some(opt_idx));
+                                    true
+                                }
+                                _ => false,
+                            }
+                        };
+                        if changed {
+                            self.sync_select_popup_highlights(sel_id);
                             self.needs_paint = true;
                         }
                     }
                 }
-
-                let old_hover_id = self.hovered_node_id;
-                let new_hover_id = self.hit_node_id(x, y);
                 let hover_changed = self.set_hover_to_node(x, y, new_hover_id);
 
                 // Browser parity: if the mouse moves off the actively-pressed
@@ -841,55 +844,59 @@ impl Instance {
                 button: MouseButton::Left,
                 ..
             } => {
-                // Check if click is on a popup option
-                for popup in &self.select_popups.clone() {
-                    if let Some(option_idx) = popup.option_at_point(x, y) {
-                        if !popup.options[option_idx].disabled {
-                            let mut result = TickResult::default();
+                let hit_id = self.hit_node_id(x, y);
 
-                            // Update selection
-                            {
-                                let mut selects = self.js.selects.borrow_mut();
-                                if let Some(state) = selects.get_mut(&popup.select_id) {
-                                    state.set_selected_index(Some(option_idx));
-                                    state.set_open(false);
-                                }
+                // Click landed on a popup option: commit the selection and close.
+                if let Some(hit_id) = hit_id {
+                    if let Some((sel_id, opt_idx)) = self.popup_option_for_hit(hit_id) {
+                        let disabled = self
+                            .js
+                            .selects
+                            .borrow()
+                            .get(&sel_id)
+                            .and_then(|s| s.options.get(opt_idx).map(|o| o.disabled))
+                            .unwrap_or(true);
+                        if !disabled {
+                            if let Some(state) = self.js.selects.borrow_mut().get_mut(&sel_id) {
+                                state.set_selected_index(Some(opt_idx));
                             }
-
-                            // Refresh display and emit change event
-                            self.refresh_select_text(popup.select_id);
-                            let select_snapshot = self.js.selects.borrow().get(&popup.select_id).map(|s| {
-                                (s.value().unwrap_or_default(), s.selected_index())
-                            });
+                            self.set_select_open(sel_id, false);
+                            self.refresh_select_text(sel_id);
+                            let select_snapshot = self
+                                .js
+                                .selects
+                                .borrow()
+                                .get(&sel_id)
+                                .map(|s| (s.value().unwrap_or_default(), s.selected_index()));
                             if let Some((value, selected_index)) = select_snapshot {
-                                result = combine_tick_result(
-                                    result,
-                                    self.js.dispatch_select_change_event(
-                                        popup.select_id,
-                                        &value,
-                                        selected_index,
-                                    ),
+                                return self.js.dispatch_select_change_event(
+                                    sel_id,
+                                    &value,
+                                    selected_index,
                                 );
                             }
-
-                            self.needs_paint = true;
-                            return result;
+                            return TickResult::default();
                         }
+                        // Disabled option click: swallow and keep open.
+                        return TickResult { needs_paint: false, jobs_pending: false };
                     }
                 }
 
-                // Close any open popups if clicking outside them
-                let popups_to_close: Vec<usize> = self.select_popups.iter().map(|p| p.select_id).collect();
-                for select_id in popups_to_close {
-                    let mut selects = self.js.selects.borrow_mut();
-                    if let Some(state) = selects.get_mut(&select_id) {
-                        if state.is_open() {
-                            // Check if click was on the select itself (which would have been handled by handle_select_click)
-                            if self.hit_node_id(x, y) != Some(select_id) {
-                                state.set_open(false);
-                                self.needs_paint = true;
-                            }
-                        }
+                // Click landed somewhere outside any open select+popup: close
+                // those popups (a click on the select itself is dispatched via
+                // handle_select_click below).
+                let owning_select = hit_id.and_then(|id| self.select_owning_hit(id));
+                let open_selects: Vec<usize> = self
+                    .js
+                    .selects
+                    .borrow()
+                    .iter()
+                    .filter(|(_, s)| s.is_open())
+                    .map(|(id, _)| *id)
+                    .collect();
+                for select_id in open_selects {
+                    if Some(select_id) != owning_select {
+                        self.set_select_open(select_id, false);
                     }
                 }
 
@@ -1259,7 +1266,7 @@ impl Instance {
             if event_name == "keydown" && self.js.inputs.borrow().contains_key(&focused_id) {
                 apply_input_key(&self.js.inputs, focused_id, &event)
             } else if event_name == "keydown" && self.js.selects.borrow().contains_key(&focused_id) {
-                apply_select_key(&self.js.selects, focused_id, &event)
+                self.apply_select_key(focused_id, &event)
             } else {
                 (false, false)
             };
@@ -1375,88 +1382,6 @@ impl Instance {
                 .mutate()
                 .set_attribute(select_id, blitz_dom::QualName::new(None, blitz_dom::ns!(), blitz_dom::LocalName::from("value")), &value);
         }
-    }
-
-    /// Collect select popup geometries for all open selects.
-    fn collect_select_popups(&self) -> Vec<crate::select::SelectPopupGeometry> {
-        let mut popups = Vec::new();
-        let doc = self.doc.borrow();
-        let selects = self.js.selects.borrow();
-
-        for (select_id, state) in selects.iter() {
-            if !state.is_open() {
-                continue;
-            }
-
-            if let Some(select_node) = doc.get_node(*select_id) {
-                let abs = select_node.absolute_position(0.0, 0.0);
-                let l = &select_node.final_layout;
-
-                // absolute_position already accounts for all parent scroll offsets,
-                // so we can use it directly for the popup position
-                let x = abs.x;
-                let y = abs.y + l.size.height;
-                let width = l.size.width;
-
-                // Collect option labels from DOM nodes
-                let mut options = Vec::new();
-                for (i, opt_state) in state.options.iter().enumerate() {
-                    // Try to find the actual option element's text content
-                    let mut label = opt_state.label.clone();
-
-                    // Walk through select's children to find option elements
-                    for child_id in select_node.children.iter() {
-                        if let Some(child) = doc.get_node(*child_id) {
-                            if let Some(elem) = child.element_data() {
-                                if elem.name.local.as_ref() == "option" {
-                                    // Check if this is the i-th option
-                                    let mut current_index = 0;
-                                    for potential_id in select_node.children.iter() {
-                                        if let Some(p) = doc.get_node(*potential_id) {
-                                            if let Some(e) = p.element_data() {
-                                                if e.name.local.as_ref() == "option" {
-                                                    if current_index == i {
-                                                        // Found the right option, get its text
-                                                        if let Some(first_child) = p.children.first() {
-                                                            if let Some(text_node) = doc.get_node(*first_child) {
-                                                                if let Some(text) = text_node.text_data() {
-                                                                    label = text.content.clone();
-                                                                }
-                                                            }
-                                                        }
-                                                        break;
-                                                    }
-                                                    current_index += 1;
-                                                }
-                                            }
-                                        }
-                                    }
-                                    break;
-                                }
-                            }
-                        }
-                    }
-
-                    options.push(crate::select::PopupOption {
-                        label,
-                        disabled: opt_state.disabled,
-                    });
-                }
-
-                popups.push(crate::select::SelectPopupGeometry {
-                    select_id: *select_id,
-                    x,
-                    y,
-                    width,
-                    height: 0.0, // Will be computed in rendering
-                    options,
-                    selected_index: state.selected_index(),
-                    active_index: state.active_index(),
-                });
-            }
-        }
-
-        popups
     }
 
     fn sync_input_render_text_before_layout(&self) {
@@ -1799,6 +1724,18 @@ impl Instance {
     pub fn container_id(&self) -> usize {
         self.container_id
     }
+
+    /// Iterate registered `<select>` node ids. Useful for tests and host code
+    /// that wants to drive popups programmatically.
+    pub fn select_node_ids(&self) -> Vec<usize> {
+        self.js.selects.borrow().keys().copied().collect()
+    }
+
+    /// Programmatically open or close a `<select>` dropdown. Used by tests
+    /// and by host code that drives selects without a real pointer.
+    pub fn set_select_dropdown_open(&mut self, select_id: usize, open: bool) {
+        self.set_select_open(select_id, open);
+    }
 }
 
 fn register_initial_stylesheets(
@@ -1807,6 +1744,10 @@ fn register_initial_stylesheets(
 ) -> (std::collections::HashMap<StylesheetId, String>, u64) {
     let mut map = std::collections::HashMap::new();
     let mut d = doc.borrow_mut();
+    // Always register the select popup UA stylesheet first so host stylesheets
+    // can override it. It is intentionally not tracked in the host-visible
+    // stylesheet map.
+    d.add_user_agent_stylesheet(crate::select::POPUP_UA_CSS);
     for (i, css) in sources.iter().enumerate() {
         d.add_user_agent_stylesheet(css);
         map.insert(StylesheetId(i as u64), css.clone());
@@ -2075,114 +2016,119 @@ fn apply_input_key(
     }
 }
 
-/// Apply a keyboard event to a select element when closed.
-/// Returns (edited, emits_change_event).
-fn apply_select_key(
-    selects: &crate::select::SelectRegistry,
-    select_id: usize,
-    event: &KeyboardEvent,
-) -> (bool, bool) {
-    let mut map = selects.borrow_mut();
-    let Some(state) = map.get_mut(&select_id) else {
-        return (false, false);
-    };
+/// Outcome of a keyboard event applied to a select.
+#[derive(Default, Clone, Copy)]
+struct SelectKeyOutcome {
+    /// State changed and the synthetic display text needs re-syncing.
+    edited: bool,
+    /// `change` event should be dispatched.
+    emits_change: bool,
+    /// Popup overlay should be opened (after this returns).
+    open_popup: bool,
+    /// Popup overlay should be closed (after this returns).
+    close_popup: bool,
+    /// Popup active-index changed and class lists need re-syncing.
+    sync_highlights: bool,
+}
 
-    // Don't process keys when the select is disabled
-    if state.disabled() {
-        return (false, false);
-    }
-
-    // When closed, handle navigation and open-select keys
+/// Pure state transition: given a select and a keyboard event, return what
+/// the caller should do. The state mutations that don't touch the DOM (moving
+/// selection, setting active_index) are applied in place; DOM-affecting steps
+/// (opening/closing the popup, restyling options) are deferred to the caller.
+fn select_key_outcome(state: &mut crate::select::SelectState, event: &KeyboardEvent) -> SelectKeyOutcome {
+    let mut out = SelectKeyOutcome::default();
     if !state.is_open() {
         match event.key.as_str() {
             "ArrowDown" | "Down" => {
                 let edited = state.move_selection(1);
-                (edited, edited)
+                out.edited = edited;
+                out.emits_change = edited;
             }
             "ArrowUp" | "Up" => {
                 let edited = state.move_selection(-1);
-                (edited, edited)
+                out.edited = edited;
+                out.emits_change = edited;
             }
             "Home" => {
                 let edited = state.jump_to_extreme(false);
-                (edited, edited)
+                out.edited = edited;
+                out.emits_change = edited;
             }
             "End" => {
                 let edited = state.jump_to_extreme(true);
-                (edited, edited)
+                out.edited = edited;
+                out.emits_change = edited;
             }
             " " | "Space" | "Enter" => {
-                // Open the select dropdown
-                state.set_open(true);
-                (true, false)
+                out.edited = true;
+                out.open_popup = true;
             }
-            _ => (false, false),
+            _ => {}
         }
     } else {
-        // When open, handle arrow navigation and commit
         match event.key.as_str() {
             "ArrowDown" | "Down" => {
-                let idx = state.active_index().unwrap_or_else(|| {
-                    state.selected_index().unwrap_or(0)
-                });
+                let idx = state.active_index().unwrap_or_else(|| state.selected_index().unwrap_or(0));
                 let len = state.options.len() as i32;
-                let next = ((idx as i32 + 1).rem_euclid(len)) as usize;
-                state.set_active_index(Some(next));
-                (true, false)
+                if len > 0 {
+                    let next = ((idx as i32 + 1).rem_euclid(len)) as usize;
+                    state.set_active_index(Some(next));
+                    out.edited = true;
+                    out.sync_highlights = true;
+                }
             }
             "ArrowUp" | "Up" => {
-                let idx = state.active_index().unwrap_or_else(|| {
-                    state.selected_index().unwrap_or(0)
-                });
+                let idx = state.active_index().unwrap_or_else(|| state.selected_index().unwrap_or(0));
                 let len = state.options.len() as i32;
-                let next = ((idx as i32 - 1).rem_euclid(len)) as usize;
-                state.set_active_index(Some(next));
-                (true, false)
+                if len > 0 {
+                    let next = ((idx as i32 - 1).rem_euclid(len)) as usize;
+                    state.set_active_index(Some(next));
+                    out.edited = true;
+                    out.sync_highlights = true;
+                }
             }
             "Home" => {
                 if let Some(first_enabled) = state.find_first_enabled() {
                     state.set_active_index(Some(first_enabled));
-                    (true, false)
-                } else {
-                    (false, false)
+                    out.edited = true;
+                    out.sync_highlights = true;
                 }
             }
             "End" => {
-                let last_enabled = state.options.iter().rposition(|opt| !opt.disabled);
-                if let Some(idx) = last_enabled {
+                if let Some(idx) = state.options.iter().rposition(|opt| !opt.disabled) {
                     state.set_active_index(Some(idx));
-                    (true, false)
-                } else {
-                    (false, false)
+                    out.edited = true;
+                    out.sync_highlights = true;
                 }
             }
             "Enter" | " " | "Space" => {
-                // Commit the active option to selected
                 if let Some(active) = state.active_index() {
                     if !state.options[active].disabled {
                         state.set_selected_index(Some(active));
                     }
                 }
-                state.set_open(false);
-                (true, true)
+                out.edited = true;
+                out.emits_change = true;
+                out.close_popup = true;
             }
             "Escape" => {
-                state.set_open(false);
-                (true, false)
+                out.edited = true;
+                out.close_popup = true;
             }
             "Tab" => {
-                // Tab commits current active and closes (will move focus to next element)
                 if let Some(active) = state.active_index() {
                     if !state.options[active].disabled {
                         state.set_selected_index(Some(active));
                     }
                 }
-                state.set_open(false);
-                (true, true)
+                out.edited = true;
+                out.emits_change = true;
+                out.close_popup = true;
             }
-            _ => (false, false),
+            _ => {}
         }
     }
+    out
 }
 
 impl Instance {
@@ -2270,26 +2216,237 @@ impl Instance {
         TickResult::default()
     }
 
-    /// Handle a mouse click on a select element: toggle open state.
-    fn handle_select_click(&mut self, select_id: usize) -> TickResult {
-        let edited = {
+    /// Apply a keyboard event to a focused `<select>`. Mutates state, drives
+    /// the popup overlay open/closed, and reports back whether the synthetic
+    /// label and `change` event need to fire.
+    fn apply_select_key(&mut self, select_id: usize, event: &KeyboardEvent) -> (bool, bool) {
+        let outcome = {
             let mut map = self.js.selects.borrow_mut();
             let Some(state) = map.get_mut(&select_id) else {
-                return TickResult::default();
+                return (false, false);
             };
-            state.set_open(!state.is_open());
-            true
+            if state.disabled() {
+                return (false, false);
+            }
+            select_key_outcome(state, event)
         };
-
-        if edited {
-            self.refresh_select_text(select_id);
+        if outcome.open_popup {
+            self.set_select_open(select_id, true);
+        }
+        if outcome.close_popup {
+            self.set_select_open(select_id, false);
+        }
+        if outcome.sync_highlights {
+            self.sync_select_popup_highlights(select_id);
+        }
+        if outcome.edited || outcome.open_popup || outcome.close_popup || outcome.sync_highlights {
             self.needs_paint = true;
         }
+        (outcome.edited, outcome.emits_change)
+    }
+
+    /// Handle a mouse click on a select element: toggle open state.
+    fn handle_select_click(&mut self, select_id: usize) -> TickResult {
+        let was_open = self
+            .js
+            .selects
+            .borrow()
+            .get(&select_id)
+            .map(|s| s.is_open())
+            .unwrap_or(false);
+        self.set_select_open(select_id, !was_open);
+        self.refresh_select_text(select_id);
 
         TickResult {
             needs_paint: true,
             jobs_pending: false,
         }
+    }
+
+    /// Open or close `select_id`'s dropdown. Keeps `SelectState.open` and the
+    /// DOM popup overlay in sync — never call `state.set_open` directly from
+    /// outside the select state itself.
+    fn set_select_open(&mut self, select_id: usize, open: bool) {
+        let was_open = {
+            let mut map = self.js.selects.borrow_mut();
+            let Some(state) = map.get_mut(&select_id) else {
+                return;
+            };
+            let was = state.is_open();
+            state.set_open(open);
+            was
+        };
+        if open && !was_open {
+            self.mount_select_popup(select_id);
+        } else if !open && was_open {
+            self.unmount_select_popup(select_id);
+        }
+        self.needs_paint = true;
+    }
+
+    /// Build the popup `<div>` for `select_id` and append it as the last child
+    /// of the select. Stores the popup root and per-option node ids on the
+    /// `SelectState` so mouse hit-tests can map a hovered node back to an
+    /// option index.
+    fn mount_select_popup(&mut self, select_id: usize) {
+        // Snapshot what the popup needs without holding the selects borrow
+        // while we mutate the DOM.
+        let snapshot: Option<(Vec<(String, bool)>, Option<usize>, Option<usize>)> = self
+            .js
+            .selects
+            .borrow()
+            .get(&select_id)
+            .map(|s| {
+                (
+                    s.options.iter().map(|o| (o.label.clone(), o.disabled)).collect(),
+                    s.selected_index(),
+                    s.active_index(),
+                )
+            });
+        let Some((labels, selected_idx, active_idx)) = snapshot else {
+            return;
+        };
+
+        let mut doc = self.doc.borrow_mut();
+        let popup_id = doc.mutate().create_element(
+            QualName::new(None, ns!(html), LocalName::from("div")),
+            vec![],
+        );
+        doc.mutate().set_attribute(
+            popup_id,
+            QualName::new(None, ns!(), LocalName::from("class")),
+            crate::select::POPUP_CLASS,
+        );
+
+        let mut option_ids = Vec::with_capacity(labels.len());
+        for (i, (label, disabled)) in labels.iter().enumerate() {
+            let opt_id = doc.mutate().create_element(
+                QualName::new(None, ns!(html), LocalName::from("div")),
+                vec![],
+            );
+            let mut classes = String::from(crate::select::POPUP_OPTION_CLASS);
+            if *disabled {
+                classes.push(' ');
+                classes.push_str(crate::select::POPUP_OPTION_DISABLED_CLASS);
+            }
+            if Some(i) == selected_idx {
+                classes.push(' ');
+                classes.push_str(crate::select::POPUP_OPTION_SELECTED_CLASS);
+            }
+            if Some(i) == active_idx {
+                classes.push(' ');
+                classes.push_str(crate::select::POPUP_OPTION_ACTIVE_CLASS);
+            }
+            doc.mutate().set_attribute(
+                opt_id,
+                QualName::new(None, ns!(), LocalName::from("class")),
+                &classes,
+            );
+            let text_id = doc.create_text_node(label);
+            doc.mutate().append_children(opt_id, &[text_id]);
+            doc.mutate().append_children(popup_id, &[opt_id]);
+            option_ids.push(opt_id);
+        }
+
+        doc.mutate().append_children(select_id, &[popup_id]);
+        drop(doc);
+
+        if let Some(state) = self.js.selects.borrow_mut().get_mut(&select_id) {
+            state.popup_root_id = Some(popup_id);
+            state.option_node_ids = option_ids;
+        }
+    }
+
+    /// Remove the popup overlay rooted at the recorded popup id and clear the
+    /// stored ids on the `SelectState`.
+    fn unmount_select_popup(&mut self, select_id: usize) {
+        let popup_id = {
+            let mut map = self.js.selects.borrow_mut();
+            let Some(state) = map.get_mut(&select_id) else {
+                return;
+            };
+            state.option_node_ids.clear();
+            state.popup_root_id.take()
+        };
+        if let Some(popup_id) = popup_id {
+            self.doc.borrow_mut().mutate().remove_and_drop_node(popup_id);
+        }
+    }
+
+    /// Rewrite the popup option class lists so the active/selected highlights
+    /// match the current `SelectState`. Called after keyboard or mouse
+    /// navigation while the popup is open.
+    fn sync_select_popup_highlights(&mut self, select_id: usize) {
+        let snapshot = self.js.selects.borrow().get(&select_id).map(|s| {
+            (
+                s.option_node_ids.clone(),
+                s.options.iter().map(|o| o.disabled).collect::<Vec<bool>>(),
+                s.selected_index(),
+                s.active_index(),
+            )
+        });
+        let Some((option_ids, disabled, selected_idx, active_idx)) = snapshot else {
+            return;
+        };
+        let mut doc = self.doc.borrow_mut();
+        for (i, opt_id) in option_ids.iter().enumerate() {
+            let mut classes = String::from(crate::select::POPUP_OPTION_CLASS);
+            if disabled.get(i).copied().unwrap_or(false) {
+                classes.push(' ');
+                classes.push_str(crate::select::POPUP_OPTION_DISABLED_CLASS);
+            }
+            if Some(i) == selected_idx {
+                classes.push(' ');
+                classes.push_str(crate::select::POPUP_OPTION_SELECTED_CLASS);
+            }
+            if Some(i) == active_idx {
+                classes.push(' ');
+                classes.push_str(crate::select::POPUP_OPTION_ACTIVE_CLASS);
+            }
+            doc.mutate().set_attribute(
+                *opt_id,
+                QualName::new(None, ns!(), LocalName::from("class")),
+                &classes,
+            );
+        }
+    }
+
+    /// Map a hovered node back to the popup option it belongs to, walking up
+    /// the parent chain until we hit a popup option whose id was recorded by
+    /// `mount_select_popup`. Returns `(select_id, option_index)`.
+    fn popup_option_for_hit(&self, hit_id: usize) -> Option<(usize, usize)> {
+        let doc = self.doc.borrow();
+        let selects = self.js.selects.borrow();
+        let mut current = Some(hit_id);
+        while let Some(id) = current {
+            for (sel_id, state) in selects.iter() {
+                if let Some(pos) = state.option_node_ids.iter().position(|opt| *opt == id) {
+                    return Some((*sel_id, pos));
+                }
+            }
+            current = doc.get_node(id).and_then(|n| n.parent);
+        }
+        None
+    }
+
+    /// Returns the id of the select that owns `hit_id`, treating both the
+    /// select element itself and the open popup overlay as belonging to it.
+    fn select_owning_hit(&self, hit_id: usize) -> Option<usize> {
+        let doc = self.doc.borrow();
+        let selects = self.js.selects.borrow();
+        let mut current = Some(hit_id);
+        while let Some(id) = current {
+            if selects.contains_key(&id) {
+                return Some(id);
+            }
+            for (sel_id, state) in selects.iter() {
+                if state.popup_root_id == Some(id) {
+                    return Some(*sel_id);
+                }
+            }
+            current = doc.get_node(id).and_then(|n| n.parent);
+        }
+        None
     }
 
     /// Compute a new range value from a document-space x coordinate and apply

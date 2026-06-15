@@ -56,7 +56,8 @@ impl Painter {
     ///
     /// `document.resolve()` is assumed to have been called already. The
     /// optional `scrollbars` slice is painted as a post-pass on top of the
-    /// document content. Select popups are also painted as a post-pass overlay.
+    /// document content. Select popups render as normal DOM nodes mounted
+    /// under their `<select>` while open, so no special pass is needed here.
     pub fn paint(
         &mut self,
         document: &mut BaseDocument,
@@ -64,7 +65,6 @@ impl Painter {
         input_selections: &[InputSelection],
         input_carets: &[InputCaret],
         theme_override: Option<ScrollbarColors>,
-        popups: &[crate::select::SelectPopupGeometry],
         target: &wgpu::Texture,
     ) {
         self.vello.render(
@@ -79,7 +79,6 @@ impl Painter {
                     1.0,
                     theme_override,
                 );
-                paint_select_popups(scene, popups, 1.0);
             },
             &mut self.cpu_buffer,
         );
@@ -171,229 +170,5 @@ fn paint_input_carets<S: PaintScene>(scene: &mut S, carets: &[InputCaret], scale
             None,
             &rect,
         );
-    }
-}
-
-fn paint_select_popups<S: PaintScene>(
-    scene: &mut S,
-    popups: &[crate::select::SelectPopupGeometry],
-    scale: f64,
-) {
-    let bg_color = peniko::Color::from_rgba8(255, 255, 255, 255);
-    let border_color = peniko::Color::from_rgba8(128, 128, 128, 255);
-    let selected_bg = peniko::Color::from_rgba8(200, 220, 255, 255);
-    let hover_bg = peniko::Color::from_rgba8(220, 235, 255, 255);
-    // TODO: Text rendering not yet implemented; these colors reserved for future use
-    let _text_color = peniko::Color::from_rgba8(0, 0, 0, 255);
-    let _disabled_text = peniko::Color::from_rgba8(128, 128, 128, 255);
-
-    // Debug: If popups are open, draw a visible indicator in top-left corner
-    if !popups.is_empty() {
-        let debug_rect = Rect::new(0.0, 0.0, 50.0, 50.0);
-        let debug_color = peniko::Color::from_rgba8(255, 0, 0, 200);
-        scene.fill(
-            Fill::NonZero,
-            Affine::scale(scale),
-            debug_color,
-            None,
-            &debug_rect,
-        );
-    }
-
-    for popup in popups {
-        let option_height = 24.0;
-        let vertical_padding = 4.0;
-        let popup_height = popup.popup_height();
-
-        // Draw popup background and border
-        let popup_rect = Rect::new(
-            popup.x as f64,
-            popup.y as f64,
-            (popup.x + popup.width) as f64,
-            (popup.y + popup_height) as f64,
-        );
-        scene.fill(
-            Fill::NonZero,
-            Affine::scale(scale),
-            bg_color,
-            None,
-            &popup_rect,
-        );
-
-        // Draw border (all four sides for visibility)
-        let border_width = 2.0;
-
-        // Top border
-        scene.fill(
-            Fill::NonZero,
-            Affine::scale(scale),
-            border_color,
-            None,
-            &Rect::new(
-                popup.x as f64,
-                popup.y as f64,
-                (popup.x + popup.width) as f64,
-                (popup.y + border_width) as f64,
-            ),
-        );
-
-        // Bottom border
-        scene.fill(
-            Fill::NonZero,
-            Affine::scale(scale),
-            border_color,
-            None,
-            &Rect::new(
-                popup.x as f64,
-                (popup.y + popup_height - border_width) as f64,
-                (popup.x + popup.width) as f64,
-                (popup.y + popup_height) as f64,
-            ),
-        );
-
-        // Left border
-        scene.fill(
-            Fill::NonZero,
-            Affine::scale(scale),
-            border_color,
-            None,
-            &Rect::new(
-                popup.x as f64,
-                popup.y as f64,
-                (popup.x + border_width) as f64,
-                (popup.y + popup_height) as f64,
-            ),
-        );
-
-        // Right border
-        scene.fill(
-            Fill::NonZero,
-            Affine::scale(scale),
-            border_color,
-            None,
-            &Rect::new(
-                (popup.x + popup.width - border_width) as f64,
-                popup.y as f64,
-                (popup.x + popup.width) as f64,
-                (popup.y + popup_height) as f64,
-            ),
-        );
-
-        // Draw options
-        for (i, option) in popup.options.iter().enumerate() {
-            let y = popup.y + vertical_padding + (i as f32 * option_height);
-            let option_rect = Rect::new(
-                popup.x as f64,
-                y as f64,
-                (popup.x + popup.width) as f64,
-                (y + option_height) as f64,
-            );
-
-            // Background color based on state
-            let bg = if Some(i) == popup.active_index.map(|x| x as usize) {
-                hover_bg
-            } else if Some(i) == popup.selected_index.map(|x| x as usize) {
-                selected_bg
-            } else {
-                bg_color
-            };
-
-            scene.fill(
-                Fill::NonZero,
-                Affine::scale(scale),
-                bg,
-                None,
-                &option_rect,
-            );
-
-            // Draw option number as simple shape indicator
-            let number = (i + 1) as u8;
-            let number_x = popup.x + 6.0;
-            let number_y = y + option_height / 2.0 - 5.0;
-            let cell_size = 3.0;
-
-            // Render number using simple filled dots (pixel art style)
-            // This is a fallback for proper text rendering
-            let digit_color = if option.disabled {
-                peniko::Color::from_rgba8(100, 100, 100, 150)
-            } else {
-                peniko::Color::from_rgba8(0, 0, 0, 200)
-            };
-
-            // Draw a simple number representation (1 = single dot, 2 = two dots, etc.)
-            for j in 0..number {
-                let dot_x = number_x + (j as f32 * cell_size * 1.5);
-                let dot_y = number_y;
-                let dot_rect = Rect::new(
-                    dot_x as f64,
-                    dot_y as f64,
-                    (dot_x + cell_size) as f64,
-                    (dot_y + cell_size) as f64,
-                );
-                scene.fill(
-                    Fill::NonZero,
-                    Affine::scale(scale),
-                    digit_color,
-                    None,
-                    &dot_rect,
-                );
-            }
-
-            // Draw option label as simple indicator text area
-            let label_text = &option.label;
-            let label_color = if option.disabled {
-                peniko::Color::from_rgba8(128, 128, 128, 150)
-            } else {
-                peniko::Color::from_rgba8(40, 40, 40, 200)
-            };
-
-            // Draw label background box
-            let label_x = popup.x + 28.0;
-            let label_width = popup.width - 36.0;
-            let label_height = 6.0;
-            let label_y = y + option_height / 2.0 - label_height / 2.0;
-
-            let label_rect = Rect::new(
-                label_x as f64,
-                label_y as f64,
-                (label_x + label_width) as f64,
-                (label_y + label_height) as f64,
-            );
-
-            scene.fill(
-                Fill::NonZero,
-                Affine::scale(scale),
-                label_color,
-                None,
-                &label_rect,
-            );
-
-            // TODO: Render actual text - for now we draw a visual representation
-            let _ = label_text;
-
-            // Draw disabled indicator if needed
-            if option.disabled {
-                let disable_line_y = y + option_height / 2.0;
-                let disable_line = Rect::new(
-                    (popup.x + 2.0) as f64,
-                    (disable_line_y - 0.5) as f64,
-                    (popup.x + popup.width - 2.0) as f64,
-                    (disable_line_y + 0.5) as f64,
-                );
-                let disable_color = peniko::Color::from_rgba8(200, 100, 100, 150);
-                scene.fill(
-                    Fill::NonZero,
-                    Affine::scale(scale),
-                    disable_color,
-                    None,
-                    &disable_line,
-                );
-            }
-
-            // TODO: Render actual option label text using blitz-paint's text system
-            // The option.label string should be rendered as glyphs starting at (popup.x + 20.0, y + 4.0)
-            // This requires font metrics and glyph rendering integration.
-            let _ = option;
-        }
     }
 }

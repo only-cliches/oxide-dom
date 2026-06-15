@@ -10,66 +10,40 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-/// Information about a select popup needed for rendering.
-#[derive(Debug, Clone)]
-pub struct SelectPopupGeometry {
-    pub select_id: usize,
-    pub x: f32,
-    pub y: f32,
-    pub width: f32,
-    #[allow(dead_code)]
-    pub height: f32,
-    pub options: Vec<PopupOption>,
-    pub selected_index: Option<usize>,
-    pub active_index: Option<usize>,
+/// CSS classes used on the DOM nodes that make up an open select popup.
+/// Style rules for these live in [`POPUP_UA_CSS`].
+pub const POPUP_CLASS: &str = "ox-select-popup";
+pub const POPUP_OPTION_CLASS: &str = "ox-select-popup-option";
+pub const POPUP_OPTION_ACTIVE_CLASS: &str = "ox-active";
+pub const POPUP_OPTION_SELECTED_CLASS: &str = "ox-selected";
+pub const POPUP_OPTION_DISABLED_CLASS: &str = "ox-disabled";
+
+/// User-agent stylesheet that makes select popups visible and clickable.
+/// `position: relative` on `<select>` lets the absolutely-positioned popup
+/// child anchor to the select's box.
+pub const POPUP_UA_CSS: &str = r#"
+select { position: relative; }
+.ox-select-popup {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    width: 100%;
+    background: #ffffff;
+    border: 1px solid #808080;
+    color: #000000;
+    z-index: 1000;
+    box-sizing: border-box;
+    padding: 4px 0;
 }
-
-#[derive(Debug, Clone)]
-pub struct PopupOption {
-    #[allow(dead_code)]
-    pub label: String,
-    pub disabled: bool,
+.ox-select-popup-option {
+    display: block;
+    padding: 4px 8px;
+    cursor: pointer;
 }
-
-impl SelectPopupGeometry {
-    /// Calculate the height needed for all options (with some padding).
-    pub fn popup_height(&self) -> f32 {
-        let option_height = 24.0; // Standard option height
-        let vertical_padding = 4.0;
-        (self.options.len() as f32 * option_height) + vertical_padding * 2.0
-    }
-
-    /// Get the bounds for a specific option in the popup (x, y, width, height).
-    #[allow(dead_code)]
-    pub fn option_bounds(&self, index: usize) -> Option<(f32, f32, f32, f32)> {
-        if index >= self.options.len() {
-            return None;
-        }
-        let option_height = 24.0;
-        let vertical_padding = 4.0;
-        let y = self.y + vertical_padding + (index as f32 * option_height);
-        Some((self.x, y, self.width, option_height))
-    }
-
-    /// Find which option is at the given coordinates, if any.
-    pub fn option_at_point(&self, x: f32, y: f32) -> Option<usize> {
-        if x < self.x || x > self.x + self.width {
-            return None;
-        }
-        let option_height = 24.0;
-        let vertical_padding = 4.0;
-        if y < self.y + vertical_padding {
-            return None;
-        }
-        let relative_y = y - (self.y + vertical_padding);
-        let index = (relative_y / option_height) as usize;
-        if index < self.options.len() {
-            Some(index)
-        } else {
-            None
-        }
-    }
-}
+.ox-select-popup-option.ox-selected { background: #c8dcff; }
+.ox-select-popup-option.ox-active { background: #b0c8ff; }
+.ox-select-popup-option.ox-disabled { color: #808080; cursor: default; }
+"#;
 
 #[derive(Debug, Clone)]
 pub struct SelectOption {
@@ -92,7 +66,7 @@ impl SelectOption {
 }
 
 /// Per-select editable state.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct SelectState {
     pub options: Vec<SelectOption>,
     pub selected_index: Option<usize>,
@@ -101,19 +75,13 @@ pub struct SelectState {
     pub name: Option<String>,
     pub open: bool,
     pub active_index: Option<usize>,
-}
-
-impl Default for SelectState {
-    fn default() -> Self {
-        Self {
-            options: Vec::new(),
-            selected_index: None,
-            disabled: false,
-            name: None,
-            open: false,
-            active_index: None,
-        }
-    }
+    /// Node id of the popup overlay `<div>` while the dropdown is open.
+    /// `None` while closed.
+    pub popup_root_id: Option<usize>,
+    /// One node id per option div mounted under the popup root, in the same
+    /// order as `options`. Used to hit-test mouse events without rebuilding
+    /// geometry tables.
+    pub option_node_ids: Vec<usize>,
 }
 
 impl SelectState {

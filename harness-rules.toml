@@ -161,6 +161,20 @@ approval_mode = "auto"
 
 [[hostdo.commands]]
 argv = [
+    "cargo",
+    "run",
+    "--example",
+    "select_popup_capture",
+    "--",
+    "--capture",
+    "captures/select_popup.png",
+]
+cwd = "$WORKSPACE"
+timeout_secs = 60
+approval_mode = "auto"
+
+[[hostdo.commands]]
+argv = [
     "bash",
     "-c",
     "cd js && ./node_modules/.bin/esbuild runtime.ts --bundle --format=esm --outfile=dist/runtime.js",
@@ -245,6 +259,26 @@ argv = [
 ]
 cwd = "$WORKSPACE"
 timeout_secs = 300
+approval_mode = "auto"
+
+[[hostdo.commands]]
+argv = [
+    "cargo",
+    "build",
+]
+cwd = "$WORKSPACE"
+timeout_secs = 60
+approval_mode = "auto"
+
+[[hostdo.commands]]
+argv = [
+    "cargo",
+    "test",
+    "--lib",
+    "readonly_blocks_edits_but_allows_caret",
+]
+cwd = "$WORKSPACE"
+timeout_secs = 60
 approval_mode = "auto"
 
 [network]
