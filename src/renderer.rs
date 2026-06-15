@@ -56,7 +56,7 @@ impl Painter {
     ///
     /// `document.resolve()` is assumed to have been called already. The
     /// optional `scrollbars` slice is painted as a post-pass on top of the
-    /// document content.
+    /// document content. Select popups are also painted as a post-pass overlay.
     pub fn paint(
         &mut self,
         document: &mut BaseDocument,
@@ -64,6 +64,7 @@ impl Painter {
         input_selections: &[InputSelection],
         input_carets: &[InputCaret],
         theme_override: Option<ScrollbarColors>,
+        popups: &[crate::select::SelectPopupGeometry],
         target: &wgpu::Texture,
     ) {
         self.vello.render(
@@ -78,6 +79,7 @@ impl Painter {
                     1.0,
                     theme_override,
                 );
+                paint_select_popups(scene, popups, 1.0);
             },
             &mut self.cpu_buffer,
         );
@@ -169,5 +171,85 @@ fn paint_input_carets<S: PaintScene>(scene: &mut S, carets: &[InputCaret], scale
             None,
             &rect,
         );
+    }
+}
+
+fn paint_select_popups<S: PaintScene>(
+    scene: &mut S,
+    popups: &[crate::select::SelectPopupGeometry],
+    scale: f64,
+) {
+    let bg_color = peniko::Color::from_rgba8(255, 255, 255, 255);
+    let border_color = peniko::Color::from_rgba8(128, 128, 128, 255);
+    let selected_bg = peniko::Color::from_rgba8(200, 220, 255, 255);
+    let hover_bg = peniko::Color::from_rgba8(220, 235, 255, 255);
+    let text_color = peniko::Color::from_rgba8(0, 0, 0, 255);
+    let disabled_text = peniko::Color::from_rgba8(128, 128, 128, 255);
+
+    for popup in popups {
+        let option_height = 24.0;
+        let vertical_padding = 4.0;
+        let popup_height = popup.popup_height();
+
+        // Draw popup background and border
+        let popup_rect = Rect::new(
+            popup.x as f64,
+            popup.y as f64,
+            (popup.x + popup.width) as f64,
+            (popup.y + popup_height) as f64,
+        );
+        scene.fill(
+            Fill::NonZero,
+            Affine::scale(scale),
+            bg_color,
+            None,
+            &popup_rect,
+        );
+
+        // Draw border
+        let border_width = 1.0;
+        let border_rect_top = Rect::new(
+            popup.x as f64,
+            popup.y as f64,
+            (popup.x + popup.width) as f64,
+            (popup.y + border_width) as f64,
+        );
+        scene.fill(
+            Fill::NonZero,
+            Affine::scale(scale),
+            border_color,
+            None,
+            &border_rect_top,
+        );
+
+        // Draw options
+        for (i, option) in popup.options.iter().enumerate() {
+            let y = popup.y + vertical_padding + (i as f32 * option_height);
+            let option_rect = Rect::new(
+                popup.x as f64,
+                y as f64,
+                (popup.x + popup.width) as f64,
+                (y + option_height) as f64,
+            );
+
+            // Background color based on state
+            let bg = if Some(i) == popup.active_index.map(|x| x as usize) {
+                hover_bg
+            } else if Some(i) == popup.selected_index.map(|x| x as usize) {
+                selected_bg
+            } else {
+                bg_color
+            };
+
+            scene.fill(
+                Fill::NonZero,
+                Affine::scale(scale),
+                bg,
+                None,
+                &option_rect,
+            );
+
+            // TODO: Draw option text (requires glyph rendering)
+        }
     }
 }

@@ -175,6 +175,24 @@ function App() {
         }}
       />
 
+      <select
+        class="field field-select"
+        value={globalThis.state.selectValue || "option1"}
+        onChange={(event) => {
+          globalThis.state.selectValue = event.value;
+          sendEvent(
+            "select",
+            JSON.stringify({ target: targetLabel, value: event.value }),
+          );
+        }}
+      >
+        <option value="option1">First Option</option>
+        <option value="option2">Second Option</option>
+        <option value="option3">Third Option</option>
+        <option value="option4" disabled>Disabled Option</option>
+        <option value="option5">Last Option</option>
+      </select>
+
       <div
         class="rows"
         onWheel={(event) => {
@@ -193,7 +211,7 @@ function App() {
 
       <div class="status">
         {() =>
-          `rows=${Math.max(1, Number(globalThis.state.rows || 24))} wheel=${globalThis.state.wheelCount || 0} scrollTop=${globalThis.state.scrollTop || 0} text="${textValue}" number="${numberValue}" range=${rangeValue} checkbox=${checkboxValue ? "on" : "off"} radioA=${radioAValue ? "on" : "off"} radioB=${globalThis.state.radioB ? "on" : "off"} password=${globalThis.state.password || ""}`
+          `rows=${Math.max(1, Number(globalThis.state.rows || 24))} wheel=${globalThis.state.wheelCount || 0} scrollTop=${globalThis.state.scrollTop || 0} text="${textValue}" number="${numberValue}" range=${rangeValue} checkbox=${checkboxValue ? "on" : "off"} radioA=${radioAValue ? "on" : "off"} radioB=${globalThis.state.radioB ? "on" : "off"} password=${globalThis.state.password || ""} select=${globalThis.state.selectValue || "option1"}`
         }
       </div>
     </div>
@@ -281,6 +299,12 @@ const APP_CSS: &str = r#"
 .field-number,
 .field-password {
     width: 336px;
+}
+
+/* Select dropdown styling */
+.field-select {
+    width: 336px;
+    cursor: pointer;
 }
 
 /* Range slider: strip away the box — the renderer paints its own

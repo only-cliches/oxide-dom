@@ -27,12 +27,15 @@ Recommended scope: implement `select` as a single-select dropdown first. No `mul
 - Modified `form.rs` to handle select elements in form submission
 - Selected option's value is properly serialized when forms are submitted
 
-⏳ **Phase 5: Popup Overlay and Mouse Picking** - NOT YET IMPLEMENTED
-- Mouse interaction for opening/closing dropdown
-- Popup rendering as an overlay
-- Mouse picking for option selection
-- Arrow keys when open to navigate with visual hover
-- Escape key to close without selecting
+✅ **Phase 5: Popup Overlay and Mouse Picking** - COMPLETE
+- Mouse clicking on select toggles open/closed state
+- Options render as a popup overlay below the select element
+- Mouse hover over options updates active state with visual feedback
+- Clicking on an option selects it and closes the dropdown
+- Clicking outside popup closes it without selecting
+- Arrow keys when open navigate with visual hover
+- Enter/Space/Escape keys work correctly when open
+- Popup height and layout computed from option count
 
 ---
 

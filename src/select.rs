@@ -10,6 +10,64 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+/// Information about a select popup needed for rendering.
+#[derive(Debug, Clone)]
+pub struct SelectPopupGeometry {
+    pub select_id: usize,
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+    pub options: Vec<PopupOption>,
+    pub selected_index: Option<usize>,
+    pub active_index: Option<usize>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PopupOption {
+    pub label: String,
+    pub disabled: bool,
+}
+
+impl SelectPopupGeometry {
+    /// Calculate the height needed for all options (with some padding).
+    pub fn popup_height(&self) -> f32 {
+        let option_height = 24.0; // Standard option height
+        let vertical_padding = 4.0;
+        (self.options.len() as f32 * option_height) + vertical_padding * 2.0
+    }
+
+    /// Get the bounds for a specific option in the popup (x, y, width, height).
+    pub fn option_bounds(&self, index: usize) -> Option<(f32, f32, f32, f32)> {
+        if index >= self.options.len() {
+            return None;
+        }
+        let option_height = 24.0;
+        let vertical_padding = 4.0;
+        let y = self.y + vertical_padding + (index as f32 * option_height);
+        Some((self.x, y, self.width, option_height))
+    }
+
+    /// Find which option is at the given coordinates, if any.
+    pub fn option_at_point(&self, x: f32, y: f32) -> Option<usize> {
+        if x < self.x || x > self.x + self.width {
+            return None;
+        }
+        let option_height = 24.0;
+        let vertical_padding = 4.0;
+        if y < self.y + vertical_padding {
+            return None;
+        }
+        let relative_y = y - (self.y + vertical_padding);
+        let index = (relative_y / option_height) as usize;
+        if index < self.options.len() {
+            Some(index)
+        } else {
+            None
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SelectOption {
     pub value: String,
