@@ -159,15 +159,9 @@ fn main() {
     let _ = instance.render();
     let _ = select_id;
 
-    // Hover and click the Banana option. This exercises the commit-and-close
-    // path that previously left no popup hit because the popup overflows the
-    // <select>'s box (the tree hit-test bails on out-of-bounds parents).
+    // Capture the open-popup state (no click).
     let (x, y) = (100.0, 120.0);
     let _ = instance.dispatch_mouse(x, y, MouseEvent::Move { x, y });
-    let _ = instance.tick();
-    let _ = instance.render();
-    let _ = instance.dispatch_mouse(x, y, MouseEvent::Down { x, y, button: MouseButton::Left });
-    let _ = instance.dispatch_mouse(x, y, MouseEvent::Up { x, y, button: MouseButton::Left });
     let _ = instance.tick();
     let _ = instance.render();
 

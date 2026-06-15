@@ -281,6 +281,56 @@ cwd = "$WORKSPACE"
 timeout_secs = 60
 approval_mode = "auto"
 
+[[hostdo.commands]]
+argv = [
+    "cargo",
+    "test",
+    "--lib",
+    "--",
+    "--test-threads=1",
+    "readonly_blocks",
+    "render_masks_password",
+    "add_stylesheet_applies",
+    "dynamic_subtree",
+    "input_checkbox_and_radio",
+]
+cwd = "$WORKSPACE"
+timeout_secs = 60
+approval_mode = "auto"
+
+[[hostdo.commands]]
+argv = [
+    "cargo",
+    "run",
+    "--example",
+    "kitchen_sink",
+]
+cwd = "$WORKSPACE"
+timeout_secs = 120
+approval_mode = "auto"
+
+[[hostdo.commands]]
+argv = [
+    "cargo",
+    "test",
+    "select_value_overrides_hidden_selected_placeholder",
+    "--lib",
+]
+cwd = "$WORKSPACE"
+timeout_secs = 120
+approval_mode = "auto"
+
+[[hostdo.commands]]
+argv = [
+    "cargo",
+    "test",
+    "hidden_options_are_skipped_for_navigation",
+    "--lib",
+]
+cwd = "$WORKSPACE"
+timeout_secs = 120
+approval_mode = "auto"
+
 [network]
 allowlist = [
     "domain=github.com",

@@ -25,13 +25,6 @@ pub const POPUP_UA_CSS: &str = r#"
 select { position: relative; }
 .ox-select-popup {
     position: absolute;
-    /* top: 100% resolves to the parent's padding-box bottom — i.e. just
-       above the parent's bottom border — so a naive 100% leaves the
-       popup's top edge overlapping the <select>'s border. Nudge by the
-       border width so the popup sits flush below the box. */
-    top: calc(100% + 1px);
-    left: 0;
-    width: 100%;
     background: #ffffff;
     border: 1px solid #808080;
     color: #000000;
@@ -105,6 +98,10 @@ pub struct SelectState {
 }
 
 impl SelectState {
+    fn is_user_selectable_option(option: &SelectOption) -> bool {
+        !option.disabled && !option.hidden
+    }
+
     pub fn value(&self) -> Option<String> {
         self.selected_index
             .and_then(|idx| self.options.get(idx))
@@ -135,6 +132,10 @@ impl SelectState {
 
     pub fn set_selected_index(&mut self, index: Option<usize>) {
         self.selected_index = index;
+    }
+
+    pub fn find_index_by_value(&self, value: &str) -> Option<usize> {
+        self.options.iter().position(|opt| opt.value == value)
     }
 
     /// Returns the value of the currently selected option, if any.
@@ -183,7 +184,7 @@ impl SelectState {
     pub fn find_first_enabled(&self) -> Option<usize> {
         self.options
             .iter()
-            .position(|opt| !opt.disabled)
+            .position(Self::is_user_selectable_option)
     }
 
     pub fn move_selection(&mut self, direction: i32) -> bool {
@@ -198,12 +199,12 @@ impl SelectState {
 
         // Skip disabled options
         let mut attempts = 0;
-        while attempts < len as usize && self.options[next].disabled {
+        while attempts < len as usize && !Self::is_user_selectable_option(&self.options[next]) {
             next = (next as i32 + direction).rem_euclid(len) as usize;
             attempts += 1;
         }
 
-        if !self.options[next].disabled {
+        if Self::is_user_selectable_option(&self.options[next]) {
             self.selected_index = Some(next);
             true
         } else {
@@ -220,12 +221,12 @@ impl SelectState {
             // Find last enabled option
             self.options
                 .iter()
-                .rposition(|opt| !opt.disabled)
+                .rposition(Self::is_user_selectable_option)
         } else {
             // Find first enabled option
             self.options
                 .iter()
-                .position(|opt| !opt.disabled)
+                .position(Self::is_user_selectable_option)
         };
 
         if let Some(idx) = target {
@@ -312,6 +313,32 @@ mod tests {
             SelectOption::new("a".into(), "Option A".into(), true),
             SelectOption::new("b".into(), "Option B".into(), false),
             SelectOption::new("c".into(), "Option C".into(), false),
+        ]);
+
+        assert_eq!(state.find_first_enabled(), Some(1));
+    }
+
+    #[test]
+    fn hidden_options_are_skipped_for_navigation() {
+        let mut state = SelectState::default();
+        state.set_options(vec![
+            SelectOption::new("placeholder".into(), "Choose..".into(), true).with_hidden(true),
+            SelectOption::new("a".into(), "Option A".into(), false),
+            SelectOption::new("b".into(), "Option B".into(), false),
+        ]);
+        state.selected_index = Some(0);
+
+        assert_eq!(state.find_first_enabled(), Some(1));
+        assert!(state.move_selection(1));
+        assert_eq!(state.selected_index, Some(1));
+    }
+
+    #[test]
+    fn first_enabled_skips_hidden_placeholder() {
+        let mut state = SelectState::default();
+        state.set_options(vec![
+            SelectOption::new("placeholder".into(), "Choose..".into(), false).with_hidden(true),
+            SelectOption::new("a".into(), "Option A".into(), false),
         ]);
 
         assert_eq!(state.find_first_enabled(), Some(1));

@@ -87,6 +87,7 @@ function App() {
             globalThis.state.radioA = false;
             globalThis.state.radioB = false;
             globalThis.state.password = "";
+            globalThis.state.selectValue = "";
             sendEvent(
               "action",
               JSON.stringify({ type: "clear", target: targetLabel }),
@@ -177,7 +178,7 @@ function App() {
 
       <select
         class="field field-select"
-        value={globalThis.state.selectValue || "option1"}
+        value={globalThis.state.selectValue ?? ""}
         onChange={(event) => {
           globalThis.state.selectValue = event.value;
           sendEvent(
@@ -186,6 +187,7 @@ function App() {
           );
         }}
       >
+        <option value="" disabled selected hidden>Choose..</option>
         <option value="option1">First Option</option>
         <option value="option2">Second Option</option>
         <option value="option3">Third Option</option>
@@ -211,7 +213,7 @@ function App() {
 
       <div class="status">
         {() =>
-          `rows=${Math.max(1, Number(globalThis.state.rows || 24))} wheel=${globalThis.state.wheelCount || 0} scrollTop=${globalThis.state.scrollTop || 0} text="${textValue}" number="${numberValue}" range=${rangeValue} checkbox=${checkboxValue ? "on" : "off"} radioA=${radioAValue ? "on" : "off"} radioB=${globalThis.state.radioB ? "on" : "off"} password=${globalThis.state.password || ""} select=${globalThis.state.selectValue || "option1"}`
+          `rows=${Math.max(1, Number(globalThis.state.rows || 24))} wheel=${globalThis.state.wheelCount || 0} scrollTop=${globalThis.state.scrollTop || 0} text="${textValue}" number="${numberValue}" range=${rangeValue} checkbox=${checkboxValue ? "on" : "off"} radioA=${radioAValue ? "on" : "off"} radioB=${globalThis.state.radioB ? "on" : "off"} password=${globalThis.state.password || ""} select=${globalThis.state.selectValue ?? ""}`
         }
       </div>
     </div>
@@ -302,7 +304,7 @@ const APP_CSS: &str = r#"
 }
 
 /* Select dropdown styling */
-.field-select {
+select.field-select {
     width: 336px;
     cursor: pointer;
 }
@@ -326,20 +328,26 @@ const APP_CSS: &str = r#"
    box-sizing keeps the rendered border-box at the declared size — without it
    `padding` adds 6px to each axis and the radios become 28x28 rounded
    rectangles instead of 22x22 squares. */
-.field-checkbox,
-.field-radio {
+input.field-checkbox,
+input.field-radio {
     box-sizing: border-box;
     width: 22px;
     height: 22px;
     min-height: 22px;
+    min-width: 22px;
     padding: 3px;
+    margin: 0;
     color: #5b8cfa;
     cursor: pointer;
+    flex: 0 0 auto;
 }
 /* UA stylesheet sets a fixed 14px border-radius for radios, which is enough
    for the 14px UA size but reads as a pill once we resize the box. Half the
    box (11px) collapses the corners into a circle. */
-.field-radio {
+input.field-checkbox {
+    border-radius: 0;
+}
+input.field-radio {
     border-radius: 11px;
 }
 

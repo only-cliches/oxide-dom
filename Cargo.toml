@@ -24,6 +24,7 @@ anyrender = "0.11"
 anyrender_vello = "0.11"
 kurbo = "0.13"
 peniko = "0.6"
+parley = "0.10"
 stylo = "0.18"
 style_dom = { version = "0.18", package = "stylo_dom" }
 wgpu = "29"

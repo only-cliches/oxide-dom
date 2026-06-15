@@ -17,7 +17,7 @@ pub(crate) type HandlerMap = HashMap<(usize, String), Persistent<Function<'stati
 fn parse_bool_attr(value: &str) -> bool {
     let value = value.trim().to_ascii_lowercase();
     match value.as_str() {
-        "" | "0" | "false" | "off" => false,
+        "0" | "false" | "off" => false,
         _ => true,
     }
 }
@@ -128,17 +128,31 @@ fn rebuild_select_state_from_dom(
                         selected_index = Some(options.len());
                     }
 
-                    options.push(
-                        crate::select::SelectOption::new(value, label, disabled).with_hidden(hidden),
-                    );
+                    let mut option = crate::select::SelectOption::new(value, label, disabled)
+                        .with_hidden(hidden);
+                    option.selected = is_selected;
+                    options.push(option);
                 }
             }
         }
     }
 
-    // Default to first enabled option if none explicitly selected
+    // The select element's own value property takes precedence over content
+    // attributes when JS has set it, mirroring browser behavior for a
+    // controlled <select>.
+    let select_value = select_node
+        .element_data()
+        .and_then(|elem| elem.attr(LocalName::from("value")))
+        .map(str::to_owned);
+    if let Some(ref value) = select_value {
+        selected_index = options.iter().position(|opt| opt.value == *value);
+    }
+
+    // Default to the first user-selectable option if none explicitly selected.
+    // Hidden placeholder options stay selected when explicitly marked
+    // `selected`, but should not win the implicit fallback choice.
     if selected_index.is_none() {
-        selected_index = options.iter().position(|opt| !opt.disabled);
+        selected_index = options.iter().position(|opt| !opt.disabled && !opt.hidden);
     }
 
     if let Some(select_state) = selects.get_mut(&select_id) {
@@ -150,16 +164,57 @@ fn rebuild_select_state_from_dom(
     }
 }
 
+fn apply_select_value(
+    selects: &mut std::collections::HashMap<usize, crate::select::SelectState>,
+    select_id: usize,
+    value: &str,
+) -> Option<String> {
+    let state = selects.get_mut(&select_id)?;
+    state.set_selected_index(state.find_index_by_value(value));
+    Some(state.current_label())
+}
+
 /// Write `display_text` into the synthetic text node that sits as the first
 /// child of `select_id`. Uses `set_node_text` so blitz marks the subtree dirty
 /// and the next layout/style pass picks up the new content.
 fn sync_select_display_text(doc: &mut BaseDocument, select_id: usize, display_text: &str) {
-    let Some(display_node_id) = doc.get_node(select_id).and_then(|n| n.children.first().copied()) else {
+    let Some(display_node_id) = doc
+        .get_node(select_id)
+        .and_then(|n| n.children.first().copied())
+    else {
         return;
     };
     doc.mutate().set_node_text(display_node_id, display_text);
 }
 
+fn rebuild_select_and_sync_display(
+    doc: &Rc<RefCell<BaseDocument>>,
+    selects: &crate::select::SelectRegistry,
+    select_id: usize,
+) {
+    let display_text = {
+        let doc_ref = doc.borrow();
+        let mut select_map = selects.borrow_mut();
+        rebuild_select_state_from_dom(&doc_ref, &mut select_map, select_id)
+    };
+    if let Some(display_text) = display_text {
+        sync_select_display_text(&mut doc.borrow_mut(), select_id, &display_text);
+    }
+}
+
+fn rebuild_parent_select_and_sync_display(
+    doc: &Rc<RefCell<BaseDocument>>,
+    selects: &crate::select::SelectRegistry,
+    node_id: usize,
+) {
+    let parent_select_id = {
+        let doc_ref = doc.borrow();
+        find_parent_select(&doc_ref, node_id)
+    };
+    if let Some(select_id) = parent_select_id {
+        rebuild_select_and_sync_display(doc, selects, select_id);
+    }
+}
 
 /// Returns the `<style>` element id that `node_id` belongs to, if any.
 ///
@@ -252,7 +307,9 @@ impl DomBridge {
                         let text_id = d.create_text_node("");
                         d.mutate().append_children(id, &[text_id]);
                         drop(d);
-                        selects.borrow_mut().insert(id, crate::select::SelectState::default());
+                        selects
+                            .borrow_mut()
+                            .insert(id, crate::select::SelectState::default());
                     }
                     Ok(id)
                 }),
@@ -298,19 +355,26 @@ impl DomBridge {
                                 let handled_input = inputs
                                     .borrow_mut()
                                     .get_mut(&node_id)
-                                    .map(|state| state.set_value(value))
+                                    .map(|state| state.set_value(value.clone()))
                                     .is_some();
-                                if !handled_input {
-                                    let parent_select_id = find_parent_select(&doc.borrow(), node_id);
-                                    if let Some(parent_select_id) = parent_select_id {
-                                        let borrow = doc.borrow();
-                                        let display_text = rebuild_select_state_from_dom(&borrow, &mut selects.borrow_mut(), parent_select_id);
-                                        drop(borrow);
-                                        if let Some(display_text) = display_text {
-                                            sync_select_display_text(&mut doc.borrow_mut(), parent_select_id, &display_text);
-                                        }
-                                    }
+                                if handled_input {
+                                    return Ok(());
                                 }
+
+                                let select_display_text = {
+                                    let mut select_map = selects.borrow_mut();
+                                    apply_select_value(&mut select_map, node_id, &value)
+                                };
+                                if let Some(display_text) = select_display_text {
+                                    sync_select_display_text(
+                                        &mut doc.borrow_mut(),
+                                        node_id,
+                                        &display_text,
+                                    );
+                                    return Ok(());
+                                }
+
+                                rebuild_parent_select_and_sync_display(&doc, &selects, node_id);
                             }
                             "placeholder" => {
                                 if let Some(state) = inputs.borrow_mut().get_mut(&node_id) {
@@ -375,6 +439,13 @@ impl DomBridge {
                                     state.set_name(if value.is_empty() {
                                         None
                                     } else {
+                                        Some(value.clone())
+                                    });
+                                }
+                                if let Some(state) = selects.borrow_mut().get_mut(&node_id) {
+                                    state.set_name(if value.is_empty() {
+                                        None
+                                    } else {
                                         Some(value)
                                     });
                                 }
@@ -406,22 +477,14 @@ impl DomBridge {
                                 if let Some(state) = selects.borrow_mut().get_mut(&node_id) {
                                     state.set_disabled(parse_bool_attr(&value));
                                 }
+                                rebuild_parent_select_and_sync_display(&doc, &selects, node_id);
+                            }
+                            "hidden" | "selected" => {
+                                rebuild_parent_select_and_sync_display(&doc, &selects, node_id);
                             }
                             _ => {
                                 // Handle option-specific attributes by finding the parent select
-                                if let Some(parent_select_id) = find_parent_select(&doc.borrow(), node_id) {
-                                    match key.as_str() {
-                                        "value" | "selected" => {
-                                            let borrow = doc.borrow();
-                                            let display_text = rebuild_select_state_from_dom(&borrow, &mut selects.borrow_mut(), parent_select_id);
-                                            drop(borrow);
-                                            if let Some(display_text) = display_text {
-                                                sync_select_display_text(&mut doc.borrow_mut(), parent_select_id, &display_text);
-                                            }
-                                        }
-                                        _ => {}
-                                    }
-                                }
+                                rebuild_parent_select_and_sync_display(&doc, &selects, node_id);
                             }
                         }
                         Ok(())
@@ -637,11 +700,8 @@ impl DomBridge {
                             }
                         };
                         if let Some(select_id) = select_to_rebuild {
-                            let display_text = rebuild_select_state_from_dom(&borrow, &mut selects.borrow_mut(), select_id);
                             drop(borrow);
-                            if let Some(display_text) = display_text {
-                                sync_select_display_text(&mut doc.borrow_mut(), select_id, &display_text);
-                            }
+                            rebuild_select_and_sync_display(&doc, &selects, select_id);
                         }
 
                         Ok(())
@@ -671,12 +731,7 @@ impl DomBridge {
 
                         // Rebuild select state if this was an option
                         if let Some(select_id) = parent_select {
-                            let borrow = doc.borrow();
-                            let display_text = rebuild_select_state_from_dom(&borrow, &mut selects.borrow_mut(), select_id);
-                            drop(borrow);
-                            if let Some(display_text) = display_text {
-                                sync_select_display_text(&mut doc.borrow_mut(), select_id, &display_text);
-                            }
+                            rebuild_select_and_sync_display(&doc, &selects, select_id);
                         }
 
                         Ok(())
@@ -700,9 +755,13 @@ impl DomBridge {
                     move |node_id: usize, text: String| -> JsResult<()> {
                         let parent_select = {
                             let borrow = doc.borrow();
-                            if let Some(parent_id) = borrow.get_node(node_id).and_then(|n| n.parent) {
+                            if let Some(parent_id) = borrow.get_node(node_id).and_then(|n| n.parent)
+                            {
                                 if let Some(parent) = borrow.get_node(parent_id) {
-                                    if parent.element_data().is_some_and(|e| e.name.local.as_ref() == "option") {
+                                    if parent
+                                        .element_data()
+                                        .is_some_and(|e| e.name.local.as_ref() == "option")
+                                    {
                                         find_parent_select(&borrow, parent_id)
                                     } else {
                                         None
@@ -723,12 +782,7 @@ impl DomBridge {
                         drop(borrow);
 
                         if let Some(select_id) = parent_select {
-                            let borrow = doc.borrow();
-                            let display_text = rebuild_select_state_from_dom(&borrow, &mut selects.borrow_mut(), select_id);
-                            drop(borrow);
-                            if let Some(display_text) = display_text {
-                                sync_select_display_text(&mut doc.borrow_mut(), select_id, &display_text);
-                            }
+                            rebuild_select_and_sync_display(&doc, &selects, select_id);
                         }
 
                         Ok(())
@@ -912,6 +966,64 @@ mod tests {
                 elem.attrs.iter().any(|a| a.name.local.as_ref() == "style"),
                 "style attribute should be set"
             );
+        });
+    }
+
+    #[test]
+    fn select_value_overrides_hidden_selected_placeholder() {
+        let (doc, _, bridge, _rt, ctx) = setup();
+        ctx.with(|ctx| {
+            bridge.install(ctx.clone()).unwrap();
+            let select_id: usize = ctx.eval("__ox_createElement('select')").unwrap();
+            let placeholder_id: usize = ctx.eval("__ox_createElement('option')").unwrap();
+            let first_id: usize = ctx.eval("__ox_createElement('option')").unwrap();
+
+            let _: Value = ctx
+                .eval(format!(
+                    "__ox_setProperty({placeholder_id}, 'value', '');\
+                     __ox_setProperty({placeholder_id}, 'disabled', '');\
+                     __ox_setProperty({placeholder_id}, 'selected', '');\
+                     __ox_setProperty({placeholder_id}, 'hidden', '');\
+                     __ox_insertNode({placeholder_id}, __ox_createTextNode('Choose..'), null);\
+                     __ox_insertNode({select_id}, {placeholder_id}, null);\
+                     __ox_setProperty({first_id}, 'value', 'option1');\
+                     __ox_insertNode({first_id}, __ox_createTextNode('First Option'), null);\
+                     __ox_insertNode({select_id}, {first_id}, null);"
+                ))
+                .unwrap();
+
+            {
+                let selects = bridge.selects.borrow();
+                let state = selects.get(&select_id).expect("select state");
+                assert_eq!(state.selected_index(), Some(0));
+                assert_eq!(state.current_label(), "Choose..");
+            }
+
+            let _: Value = ctx
+                .eval(format!("__ox_setProperty({select_id}, 'value', 'option1')"))
+                .unwrap();
+
+            {
+                let selects = bridge.selects.borrow();
+                let state = selects.get(&select_id).expect("select state");
+                assert_eq!(state.selected_index(), Some(1));
+                assert_eq!(state.selected_value(), Some("option1"));
+                assert_eq!(state.current_label(), "First Option");
+            }
+
+            let display_text = {
+                let borrow = doc.borrow();
+                let display_id = borrow
+                    .get_node(select_id)
+                    .and_then(|node| node.children.first().copied())
+                    .expect("display text child");
+                borrow
+                    .get_node(display_id)
+                    .and_then(|node| node.text_data())
+                    .map(|text| text.content.clone())
+                    .expect("display text")
+            };
+            assert_eq!(display_text, "First Option");
         });
     }
 

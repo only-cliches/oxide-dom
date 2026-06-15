@@ -6,6 +6,7 @@ use std::sync::Arc;
 use blitz_dom::{BaseDocument, DocumentConfig, LocalName, Node, QualName, ns};
 use blitz_traits::shell::{ColorScheme, ShellProvider, Viewport};
 use notify::{self, RecommendedWatcher, RecursiveMode, Watcher};
+use parley::{Affinity, Cursor, Selection};
 use serde_json::json;
 use style_dom::ElementState;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
@@ -928,7 +929,10 @@ impl Instance {
                             return TickResult::default();
                         }
                         // Disabled option click: swallow and keep open.
-                        return TickResult { needs_paint: false, jobs_pending: false };
+                        return TickResult {
+                            needs_paint: false,
+                            jobs_pending: false,
+                        };
                     }
                 }
 
@@ -1312,14 +1316,15 @@ impl Instance {
         // the updated value via `event.value` / `event.target.value`.
         // Caret-only edits (arrows/home/end etc.) refresh visual text but do
         // not dispatch `input` to match browser semantics.
-        let (edited, emits_input_event) =
-            if event_name == "keydown" && self.js.inputs.borrow().contains_key(&focused_id) {
-                apply_input_key(&self.js.inputs, focused_id, &event)
-            } else if event_name == "keydown" && self.js.selects.borrow().contains_key(&focused_id) {
-                self.apply_select_key(focused_id, &event)
-            } else {
-                (false, false)
-            };
+        let (edited, emits_input_event) = if event_name == "keydown"
+            && self.js.inputs.borrow().contains_key(&focused_id)
+        {
+            apply_input_key(&self.js.inputs, focused_id, &event)
+        } else if event_name == "keydown" && self.js.selects.borrow().contains_key(&focused_id) {
+            self.apply_select_key(focused_id, &event)
+        } else {
+            (false, false)
+        };
 
         let result = self.js.dispatch_key_event(focused_id, event_name, &event);
         if result.needs_paint {
@@ -1354,15 +1359,16 @@ impl Instance {
             }
 
             // Refresh visible text + emit change event for selects.
-            let select_snapshot = self.js.selects.borrow().get(&focused_id).map(|s| {
-                (s.value().unwrap_or_default(), s.selected_index())
-            });
+            let select_snapshot = self
+                .js
+                .selects
+                .borrow()
+                .get(&focused_id)
+                .map(|s| (s.value().unwrap_or_default(), s.selected_index()));
             if let Some((value, selected_index)) = select_snapshot {
-                let change_result = self.js.dispatch_select_change_event(
-                    focused_id,
-                    &value,
-                    selected_index,
-                );
+                let change_result =
+                    self.js
+                        .dispatch_select_change_event(focused_id, &value, selected_index);
                 return combine_tick_result(result, change_result);
             }
         }
@@ -1426,12 +1432,11 @@ impl Instance {
             .borrow()
             .get(&select_id)
             .and_then(|s| s.selected_value().map(str::to_owned));
-        if let Some(value) = value {
-            self.doc
-                .borrow_mut()
-                .mutate()
-                .set_attribute(select_id, blitz_dom::QualName::new(None, blitz_dom::ns!(), blitz_dom::LocalName::from("value")), &value);
-        }
+        self.doc.borrow_mut().mutate().set_attribute(
+            select_id,
+            blitz_dom::QualName::new(None, blitz_dom::ns!(), blitz_dom::LocalName::from("value")),
+            value.as_deref().unwrap_or(""),
+        );
     }
 
     fn sync_input_render_text_before_layout(&self) {
@@ -1583,7 +1588,7 @@ impl Instance {
         let Some(input_node) = doc.get_node(input_id) else {
             return Vec::new();
         };
-        let Some(_input_data) = input_node
+        let Some(input_data) = input_node
             .element_data()
             .and_then(|element| element.text_input_data())
         else {
@@ -1598,25 +1603,36 @@ impl Instance {
         let content_h = layout.content_box_height().max(1.0);
         let y_offset = input_node.text_input_v_centering_offset(1.0) as f32;
 
-        let selection_y = content_y + y_offset;
-        let selection_height = content_h * 0.7;
+        let display_text = state.render(true).0;
+        let selection_start = char_index_to_byte_index(&display_text, selection_start);
+        let selection_end = char_index_to_byte_index(&display_text, selection_end);
+        let layout_data = input_data.editor.try_layout().unwrap();
+        let anchor = Cursor::from_byte_index(layout_data, selection_start, Affinity::Downstream);
+        let focus = Cursor::from_byte_index(layout_data, selection_end, Affinity::Downstream);
+        let selection = Selection::new(anchor, focus);
 
-        let char_width = estimated_input_char_width(input_node);
-        let raw_x = (content_x + char_width * selection_start as f32)
-            .clamp(content_x, content_x + content_w);
-        let raw_end_x =
-            (content_x + char_width * selection_end as f32).clamp(content_x, content_x + content_w);
-        let width = (raw_end_x - raw_x).max(0.0);
-        if width <= 0.0 {
-            return Vec::new();
-        }
+        let mut selections = Vec::new();
+        selection.geometry_with(layout_data, |rect, _line_idx| {
+            let x0 = (content_x + rect.x0 as f32).clamp(content_x, content_x + content_w);
+            let x1 = (content_x + rect.x1 as f32).clamp(content_x, content_x + content_w);
+            let y0 =
+                (content_y + y_offset + rect.y0 as f32).clamp(content_y, content_y + content_h);
+            let y1 =
+                (content_y + y_offset + rect.y1 as f32).clamp(content_y, content_y + content_h);
+            let width = (x1 - x0).max(0.0);
+            let height = (y1 - y0).max(0.0);
+            if width <= 0.0 || height <= 0.0 {
+                return;
+            }
+            selections.push(InputSelection {
+                x: x0,
+                y: y0,
+                width,
+                height,
+            });
+        });
 
-        vec![InputSelection {
-            x: raw_x,
-            y: selection_y,
-            width,
-            height: selection_height.max(1.0),
-        }]
+        selections
     }
 
     fn mask_blitz_text_input_focus_for_paint(&self, doc: &mut BaseDocument) -> Option<usize> {
@@ -1887,6 +1903,13 @@ fn estimated_input_char_width(node: &Node) -> f32 {
         .unwrap_or(8.0)
 }
 
+fn char_index_to_byte_index(text: &str, char_idx: usize) -> usize {
+    text.char_indices()
+        .nth(char_idx)
+        .map(|(i, _)| i)
+        .unwrap_or(text.len())
+}
+
 fn input_caret_color(node: &Node) -> peniko::Color {
     let Some(styles) = node.primary_styles() else {
         return peniko::Color::BLACK;
@@ -2085,8 +2108,17 @@ struct SelectKeyOutcome {
 /// the caller should do. The state mutations that don't touch the DOM (moving
 /// selection, setting active_index) are applied in place; DOM-affecting steps
 /// (opening/closing the popup, restyling options) are deferred to the caller.
-fn select_key_outcome(state: &mut crate::select::SelectState, event: &KeyboardEvent) -> SelectKeyOutcome {
+fn select_key_outcome(
+    state: &mut crate::select::SelectState,
+    event: &KeyboardEvent,
+) -> SelectKeyOutcome {
     let mut out = SelectKeyOutcome::default();
+    let is_popup_selectable = |idx: usize| {
+        state
+            .options
+            .get(idx)
+            .is_some_and(|opt| !opt.disabled && !opt.hidden)
+    };
     if !state.is_open() {
         match event.key.as_str() {
             "ArrowDown" | "Down" => {
@@ -2118,23 +2150,41 @@ fn select_key_outcome(state: &mut crate::select::SelectState, event: &KeyboardEv
     } else {
         match event.key.as_str() {
             "ArrowDown" | "Down" => {
-                let idx = state.active_index().unwrap_or_else(|| state.selected_index().unwrap_or(0));
+                let idx = state
+                    .active_index()
+                    .unwrap_or_else(|| state.selected_index().unwrap_or(0));
                 let len = state.options.len() as i32;
                 if len > 0 {
-                    let next = ((idx as i32 + 1).rem_euclid(len)) as usize;
-                    state.set_active_index(Some(next));
-                    out.edited = true;
-                    out.sync_highlights = true;
+                    let mut next = ((idx as i32 + 1).rem_euclid(len)) as usize;
+                    let mut attempts = 0;
+                    while attempts < len as usize && !is_popup_selectable(next) {
+                        next = ((next as i32 + 1).rem_euclid(len)) as usize;
+                        attempts += 1;
+                    }
+                    if is_popup_selectable(next) {
+                        state.set_active_index(Some(next));
+                        out.edited = true;
+                        out.sync_highlights = true;
+                    }
                 }
             }
             "ArrowUp" | "Up" => {
-                let idx = state.active_index().unwrap_or_else(|| state.selected_index().unwrap_or(0));
+                let idx = state
+                    .active_index()
+                    .unwrap_or_else(|| state.selected_index().unwrap_or(0));
                 let len = state.options.len() as i32;
                 if len > 0 {
-                    let next = ((idx as i32 - 1).rem_euclid(len)) as usize;
-                    state.set_active_index(Some(next));
-                    out.edited = true;
-                    out.sync_highlights = true;
+                    let mut next = ((idx as i32 - 1).rem_euclid(len)) as usize;
+                    let mut attempts = 0;
+                    while attempts < len as usize && !is_popup_selectable(next) {
+                        next = ((next as i32 - 1).rem_euclid(len)) as usize;
+                        attempts += 1;
+                    }
+                    if is_popup_selectable(next) {
+                        state.set_active_index(Some(next));
+                        out.edited = true;
+                        out.sync_highlights = true;
+                    }
                 }
             }
             "Home" => {
@@ -2145,7 +2195,11 @@ fn select_key_outcome(state: &mut crate::select::SelectState, event: &KeyboardEv
                 }
             }
             "End" => {
-                if let Some(idx) = state.options.iter().rposition(|opt| !opt.disabled) {
+                if let Some(idx) = state
+                    .options
+                    .iter()
+                    .rposition(|opt| !opt.disabled && !opt.hidden)
+                {
                     state.set_active_index(Some(idx));
                     out.edited = true;
                     out.sync_highlights = true;
@@ -2153,7 +2207,7 @@ fn select_key_outcome(state: &mut crate::select::SelectState, event: &KeyboardEv
             }
             "Enter" | " " | "Space" => {
                 if let Some(active) = state.active_index() {
-                    if !state.options[active].disabled {
+                    if is_popup_selectable(active) {
                         state.set_selected_index(Some(active));
                     }
                 }
@@ -2167,7 +2221,7 @@ fn select_key_outcome(state: &mut crate::select::SelectState, event: &KeyboardEv
             }
             "Tab" => {
                 if let Some(active) = state.active_index() {
-                    if !state.options[active].disabled {
+                    if is_popup_selectable(active) {
                         state.set_selected_index(Some(active));
                     }
                 }
@@ -2323,6 +2377,18 @@ impl Instance {
                 return;
             };
             let was = state.is_open();
+            if open && !was {
+                let active_index = state
+                    .selected_index()
+                    .filter(|&idx| {
+                        state
+                            .options
+                            .get(idx)
+                            .is_some_and(|opt| !opt.disabled && !opt.hidden)
+                    })
+                    .or_else(|| state.find_first_enabled());
+                state.set_active_index(active_index);
+            }
             state.set_open(open);
             was
         };
@@ -2342,22 +2408,33 @@ impl Instance {
         // Snapshot what the popup needs without holding the selects borrow
         // while we mutate the DOM. `hidden` options keep their slot in the
         // snapshot so indices line up with `SelectState::options`.
-        let snapshot: Option<(Vec<(String, bool, bool)>, Option<usize>, Option<usize>)> = self
-            .js
-            .selects
-            .borrow()
-            .get(&select_id)
-            .map(|s| {
-                (
-                    s.options
-                        .iter()
-                        .map(|o| (o.label.clone(), o.disabled, o.hidden))
-                        .collect(),
-                    s.selected_index(),
-                    s.active_index(),
-                )
-            });
-        let Some((entries, selected_idx, active_idx)) = snapshot else {
+        let snapshot: Option<(
+            Vec<(String, bool, bool)>,
+            Option<usize>,
+            Option<usize>,
+            String,
+        )> = self.js.selects.borrow().get(&select_id).and_then(|s| {
+            let doc = self.doc.borrow();
+            let select_node = doc.get_node(select_id)?;
+            let layout = select_node.final_layout;
+            let popup_left = -(layout.border.left + layout.padding.left);
+            let popup_top =
+                layout.content_box_height() + layout.padding.bottom + layout.border.bottom;
+            let popup_width = layout.size.width;
+            let popup_style =
+                format!("left: {popup_left}px; top: {popup_top}px; width: {popup_width}px;");
+            (
+                s.options
+                    .iter()
+                    .map(|o| (o.label.clone(), o.disabled, o.hidden))
+                    .collect(),
+                s.selected_index(),
+                s.active_index(),
+                popup_style,
+            )
+                .into()
+        });
+        let Some((entries, selected_idx, active_idx, popup_style)) = snapshot else {
             return;
         };
 
@@ -2370,6 +2447,11 @@ impl Instance {
             popup_id,
             QualName::new(None, ns!(), LocalName::from("class")),
             crate::select::POPUP_CLASS,
+        );
+        doc.mutate().set_attribute(
+            popup_id,
+            QualName::new(None, ns!(), LocalName::from("style")),
+            &popup_style,
         );
 
         let mut option_ids: Vec<Option<usize>> = Vec::with_capacity(entries.len());
@@ -2427,7 +2509,10 @@ impl Instance {
             state.popup_root_id.take()
         };
         if let Some(popup_id) = popup_id {
-            self.doc.borrow_mut().mutate().remove_and_drop_node(popup_id);
+            self.doc
+                .borrow_mut()
+                .mutate()
+                .remove_and_drop_node(popup_id);
         }
     }
 
@@ -2479,7 +2564,11 @@ impl Instance {
         let mut current = Some(hit_id);
         while let Some(id) = current {
             for (sel_id, state) in selects.iter() {
-                if let Some(pos) = state.option_node_ids.iter().position(|opt| *opt == Some(id)) {
+                if let Some(pos) = state
+                    .option_node_ids
+                    .iter()
+                    .position(|opt| *opt == Some(id))
+                {
                     return Some((*sel_id, pos));
                 }
             }
@@ -4201,6 +4290,133 @@ mod tests {
             .unwrap_or_default()
     }
 
+    fn assert_input_selection_matches_layout(
+        input_type: &str,
+        typed: &str,
+        anchor: usize,
+        focus: usize,
+    ) {
+        let component = format!(
+            r#"
+            import {{ render }} from "oxide-runtime";
+            function App() {{
+              const input = __ox_createElement("input");
+              __ox_setProperty(input, "type", "{input_type}");
+              __ox_setProperty(input, "style", "display:block; width:220px; height:40px;");
+              return input;
+            }}
+            render(() => App(), __OX_ROOT__);
+        "#
+        );
+        let (mut instance, _rx) = make_instance_with(&component, &[]);
+        let _ = instance.render();
+        let _ = instance.dispatch_mouse(
+            10.0,
+            10.0,
+            MouseEvent::Down {
+                x: 10.0,
+                y: 10.0,
+                button: MouseButton::Left,
+            },
+        );
+
+        let input_id = instance
+            .doc
+            .borrow()
+            .get_node(1)
+            .and_then(|root| root.children.first().copied())
+            .unwrap();
+
+        for ch in typed.chars() {
+            let key = ch.to_string();
+            let _ = instance.dispatch_key_down(type_key(&key));
+        }
+        if let Some(state) = instance.js.inputs.borrow_mut().get_mut(&input_id) {
+            state.set_selection(anchor, focus);
+        }
+        let _ = instance.render();
+
+        let selections = instance.collect_input_selections();
+        assert!(
+            !selections.is_empty(),
+            "expected selection overlay for {input_type} input"
+        );
+
+        let expected = {
+            let doc = instance.doc.borrow();
+            let node = doc.get_node(input_id).unwrap();
+            let input_data = node
+                .element_data()
+                .and_then(|element| element.text_input_data())
+                .unwrap();
+            let layout = node.final_layout;
+            let input_origin = node.absolute_position(0.0, 0.0);
+            let content_x = input_origin.x + layout.border.left + layout.padding.left;
+            let content_y = input_origin.y + layout.border.top + layout.padding.top;
+            let content_w = layout.content_box_width().max(0.0);
+            let content_h = layout.content_box_height().max(1.0);
+            let y_offset = node.text_input_v_centering_offset(1.0) as f32;
+            let display_text = instance
+                .js
+                .inputs
+                .borrow()
+                .get(&input_id)
+                .unwrap()
+                .render(true)
+                .0;
+            let anchor = Cursor::from_byte_index(
+                input_data.editor.try_layout().unwrap(),
+                char_index_to_byte_index(&display_text, anchor),
+                Affinity::Downstream,
+            );
+            let focus = Cursor::from_byte_index(
+                input_data.editor.try_layout().unwrap(),
+                char_index_to_byte_index(&display_text, focus),
+                Affinity::Downstream,
+            );
+            let selection = Selection::new(anchor, focus);
+            let mut rects = Vec::new();
+            selection.geometry_with(input_data.editor.try_layout().unwrap(), |rect, _| {
+                let x0 = (content_x + rect.x0 as f32).clamp(content_x, content_x + content_w);
+                let x1 = (content_x + rect.x1 as f32).clamp(content_x, content_x + content_w);
+                let y0 =
+                    (content_y + y_offset + rect.y0 as f32).clamp(content_y, content_y + content_h);
+                let y1 =
+                    (content_y + y_offset + rect.y1 as f32).clamp(content_y, content_y + content_h);
+                rects.push((x0, y0, x1 - x0, y1 - y0));
+            });
+            rects
+        };
+
+        assert_eq!(selections.len(), expected.len());
+        for (actual, expected) in selections.iter().zip(expected.iter()) {
+            assert!(
+                (actual.x - expected.0).abs() < 0.01,
+                "x mismatch: {} vs {}",
+                actual.x,
+                expected.0
+            );
+            assert!(
+                (actual.y - expected.1).abs() < 0.01,
+                "y mismatch: {} vs {}",
+                actual.y,
+                expected.1
+            );
+            assert!(
+                (actual.width - expected.2).abs() < 0.01,
+                "width mismatch: {} vs {}",
+                actual.width,
+                expected.2
+            );
+            assert!(
+                (actual.height - expected.3).abs() < 0.01,
+                "height mismatch: {} vs {}",
+                actual.height,
+                expected.3
+            );
+        }
+    }
+
     #[test]
     fn input_element_routes_keys_to_rust_owned_value() {
         const COMPONENT: &str = r#"
@@ -4415,6 +4631,16 @@ mod tests {
         // Alphabetic characters are rejected by number-input handling.
         let _ = instance.dispatch_key_down(type_key("a"));
         assert_eq!(instance.state().get("value"), Some(json!("12.3")));
+    }
+
+    #[test]
+    fn input_text_selection_uses_layout_geometry() {
+        assert_input_selection_matches_layout("text", "illWWWtext", 2, 7);
+    }
+
+    #[test]
+    fn input_password_selection_uses_masked_layout_geometry() {
+        assert_input_selection_matches_layout("password", "supersecret", 1, 8);
     }
 
     #[test]

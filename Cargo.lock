@@ -3003,6 +3003,7 @@ dependencies = [
  "oxc_semantic",
  "oxc_span",
  "oxc_transformer",
+ "parley",
  "peniko",
  "pollster",
  "rquickjs",
