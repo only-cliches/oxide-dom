@@ -118,11 +118,19 @@ fn rebuild_select_state_from_dom(
                         .find(|a| a.name.local.as_ref() == "selected")
                         .is_some();
 
+                    let hidden = elem
+                        .attrs
+                        .iter()
+                        .find(|a| a.name.local.as_ref() == "hidden")
+                        .is_some();
+
                     if is_selected && selected_index.is_none() {
                         selected_index = Some(options.len());
                     }
 
-                    options.push(crate::select::SelectOption::new(value, label, disabled));
+                    options.push(
+                        crate::select::SelectOption::new(value, label, disabled).with_hidden(hidden),
+                    );
                 }
             }
         }

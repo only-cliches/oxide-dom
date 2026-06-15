@@ -565,7 +565,7 @@ impl Instance {
             {
                 continue;
             }
-            for &opt_id in &state.option_node_ids {
+            for opt_id in state.option_node_ids.iter().flatten().copied() {
                 let Some(opt_node) = doc.get_node(opt_id) else {
                     continue;
                 };
@@ -2340,20 +2340,24 @@ impl Instance {
     /// option index.
     fn mount_select_popup(&mut self, select_id: usize) {
         // Snapshot what the popup needs without holding the selects borrow
-        // while we mutate the DOM.
-        let snapshot: Option<(Vec<(String, bool)>, Option<usize>, Option<usize>)> = self
+        // while we mutate the DOM. `hidden` options keep their slot in the
+        // snapshot so indices line up with `SelectState::options`.
+        let snapshot: Option<(Vec<(String, bool, bool)>, Option<usize>, Option<usize>)> = self
             .js
             .selects
             .borrow()
             .get(&select_id)
             .map(|s| {
                 (
-                    s.options.iter().map(|o| (o.label.clone(), o.disabled)).collect(),
+                    s.options
+                        .iter()
+                        .map(|o| (o.label.clone(), o.disabled, o.hidden))
+                        .collect(),
                     s.selected_index(),
                     s.active_index(),
                 )
             });
-        let Some((labels, selected_idx, active_idx)) = snapshot else {
+        let Some((entries, selected_idx, active_idx)) = snapshot else {
             return;
         };
 
@@ -2368,8 +2372,12 @@ impl Instance {
             crate::select::POPUP_CLASS,
         );
 
-        let mut option_ids = Vec::with_capacity(labels.len());
-        for (i, (label, disabled)) in labels.iter().enumerate() {
+        let mut option_ids: Vec<Option<usize>> = Vec::with_capacity(entries.len());
+        for (i, (label, disabled, hidden)) in entries.iter().enumerate() {
+            if *hidden {
+                option_ids.push(None);
+                continue;
+            }
             let opt_id = doc.mutate().create_element(
                 QualName::new(None, ns!(html), LocalName::from("div")),
                 vec![],
@@ -2395,7 +2403,7 @@ impl Instance {
             let text_id = doc.create_text_node(label);
             doc.mutate().append_children(opt_id, &[text_id]);
             doc.mutate().append_children(popup_id, &[opt_id]);
-            option_ids.push(opt_id);
+            option_ids.push(Some(opt_id));
         }
 
         doc.mutate().append_children(select_id, &[popup_id]);
@@ -2440,6 +2448,7 @@ impl Instance {
         };
         let mut doc = self.doc.borrow_mut();
         for (i, opt_id) in option_ids.iter().enumerate() {
+            let Some(opt_id) = opt_id else { continue };
             let mut classes = String::from(crate::select::POPUP_OPTION_CLASS);
             if disabled.get(i).copied().unwrap_or(false) {
                 classes.push(' ');
@@ -2470,7 +2479,7 @@ impl Instance {
         let mut current = Some(hit_id);
         while let Some(id) = current {
             for (sel_id, state) in selects.iter() {
-                if let Some(pos) = state.option_node_ids.iter().position(|opt| *opt == id) {
+                if let Some(pos) = state.option_node_ids.iter().position(|opt| *opt == Some(id)) {
                     return Some((*sel_id, pos));
                 }
             }

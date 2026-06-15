@@ -42,6 +42,19 @@ function App() {
     return opt;
   }
 
+  // Leading sentinel: empty value, disabled, selected, hidden — the
+  // canonical placeholder pattern. The popup should NOT render this row
+  // but the closed display should read "Choose…" until the user picks.
+  function mkSentinel() {
+    const opt = __ox_createElement("option");
+    __ox_setProperty(opt, "value", "");
+    __ox_setProperty(opt, "disabled", "");
+    __ox_setProperty(opt, "selected", "");
+    __ox_setProperty(opt, "hidden", "");
+    __ox_insertNode(opt, __ox_createTextNode("Choose..."), null);
+    return opt;
+  }
+  __ox_insertNode(sel, mkSentinel(), null);
   __ox_insertNode(sel, mkOpt("a", "Apple", false), null);
   __ox_insertNode(sel, mkOpt("b", "Banana", false), null);
   __ox_insertNode(sel, mkOpt("c", "Cherry", false), null);

@@ -25,7 +25,11 @@ pub const POPUP_UA_CSS: &str = r#"
 select { position: relative; }
 .ox-select-popup {
     position: absolute;
-    top: 100%;
+    /* top: 100% resolves to the parent's padding-box bottom — i.e. just
+       above the parent's bottom border — so a naive 100% leaves the
+       popup's top edge overlapping the <select>'s border. Nudge by the
+       border width so the popup sits flush below the box. */
+    top: calc(100% + 1px);
     left: 0;
     width: 100%;
     background: #ffffff;
@@ -53,6 +57,12 @@ pub struct SelectOption {
     pub value: String,
     pub label: String,
     pub disabled: bool,
+    /// Mirrors the source `<option hidden>` attribute. The option keeps its
+    /// slot in [`SelectState::options`] (so `selected_index` and form
+    /// submission still see it), but the popup overlay skips it when
+    /// mounting the dropdown — matching how browsers treat a hidden
+    /// placeholder option.
+    pub hidden: bool,
     #[allow(dead_code)]
     pub selected: bool,
 }
@@ -63,8 +73,14 @@ impl SelectOption {
             value,
             label,
             disabled,
+            hidden: false,
             selected: false,
         }
+    }
+
+    pub fn with_hidden(mut self, hidden: bool) -> Self {
+        self.hidden = hidden;
+        self
     }
 }
 
@@ -81,10 +97,11 @@ pub struct SelectState {
     /// Node id of the popup overlay `<div>` while the dropdown is open.
     /// `None` while closed.
     pub popup_root_id: Option<usize>,
-    /// One node id per option div mounted under the popup root, in the same
-    /// order as `options`. Used to hit-test mouse events without rebuilding
-    /// geometry tables.
-    pub option_node_ids: Vec<usize>,
+    /// One slot per entry in `options`, in the same order. `Some(node_id)`
+    /// is the popup option div for that entry; `None` means the option is
+    /// hidden (no div mounted) but still occupies its slot so
+    /// `selected_index` stays valid and form submission keeps seeing it.
+    pub option_node_ids: Vec<Option<usize>>,
 }
 
 impl SelectState {
