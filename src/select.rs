@@ -37,8 +37,11 @@ select { position: relative; }
 }
 .ox-select-popup-option {
     display: block;
-    padding: 4px 8px;
+    box-sizing: border-box;
+    width: 100%;
+    padding: 6px 10px;
     cursor: pointer;
+    line-height: 1.4;
 }
 .ox-select-popup-option.ox-selected { background: #c8dcff; }
 .ox-select-popup-option.ox-active { background: #b0c8ff; }
