@@ -201,6 +201,9 @@ pub struct Instance {
     /// `dispatch_mouse` for hit-testing scrollbar thumbs / tracks before
     /// falling back to document hit-testing.
     scrollbars: Vec<ScrollbarRegion>,
+    /// Spinner geometries for `<input type="number">` elements, computed at
+    /// the last `render()`. Reused by `dispatch_mouse`.
+    spinners: Vec<crate::spinner::NumberSpinner>,
     /// Currently-dragging scrollbar, if any.
     scrollbar_drag: Option<ScrollbarDrag>,
     /// Host-supplied scrollbar theme override. When unset, scrollbar colours

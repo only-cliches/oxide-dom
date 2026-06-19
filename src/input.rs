@@ -42,6 +42,10 @@ impl InputType {
     pub const fn is_range(self) -> bool {
         matches!(self, Self::Range)
     }
+
+    pub const fn is_number(self) -> bool {
+        matches!(self, Self::Number)
+    }
 }
 
 /// Per-input editable state.
@@ -137,6 +141,10 @@ impl InputState {
 
     pub fn is_range(&self) -> bool {
         self.input_type.is_range()
+    }
+
+    pub fn is_number(&self) -> bool {
+        self.input_type.is_number()
     }
 
     pub fn set_input_type(&mut self, input_type: &str) {

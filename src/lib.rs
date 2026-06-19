@@ -14,6 +14,7 @@ mod renderer;
 mod scene;
 mod scrollbar;
 mod select;
+mod spinner;
 mod state;
 #[cfg(feature = "winit")]
 mod winit_integration;

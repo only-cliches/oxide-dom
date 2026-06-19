@@ -93,10 +93,20 @@ impl Instance {
         // and scroll_offset are now current. Reused by `dispatch_mouse` for
         // scrollbar hit-testing this frame.
         self.scrollbars = collect_scrollbar_regions(&self.doc.borrow());
+        let number_input_ids: Vec<usize> = {
+            let inputs = self.js.inputs.borrow();
+            inputs
+                .iter()
+                .filter(|(_, s)| s.is_number())
+                .map(|(&id, _)| id)
+                .collect()
+        };
+        self.spinners =
+            crate::spinner::collect_number_spinners(&self.doc.borrow(), &number_input_ids);
         let input_selections = self.collect_input_selections();
         let input_carets = self.collect_input_carets();
 
-        // Paint into the wgpu texture, layering scrollbars on top.
+        // Paint into the wgpu texture, layering scrollbars and spinners on top.
         {
             let mut doc = self.doc.borrow_mut();
             let masked_focus = self.mask_blitz_text_input_focus_for_paint(&mut doc);
@@ -105,6 +115,7 @@ impl Instance {
                 &self.scrollbars,
                 &input_selections,
                 &input_carets,
+                &self.spinners,
                 self.scrollbar_theme,
                 &self.texture,
             );
@@ -370,6 +381,27 @@ impl Instance {
                     return TickResult::default();
                 }
                 _ => {}
+            }
+        }
+
+        // MouseDown on a number-input spinner button: step value and fire event.
+        if let MouseEvent::Down {
+            button: MouseButton::Left,
+            ..
+        } = event
+        {
+            let (doc_x, doc_y) = self.document_coords_for_client(x, y);
+            if let Some(hit) = crate::spinner::hit_spinner(&self.spinners, doc_x, doc_y) {
+                let (node_id, direction) = match hit {
+                    crate::spinner::SpinnerHit::Up(id) => (id, 1i8),
+                    crate::spinner::SpinnerHit::Down(id) => (id, -1i8),
+                };
+                if let Some(r) = self.step_number_input(node_id, direction) {
+                    result = combine_tick_result(result, r);
+                }
+                self.needs_paint = true;
+                result.needs_paint = true;
+                return result;
             }
         }
 
@@ -1776,6 +1808,20 @@ fn apply_input_key(
             }
             _ => (false, false),
         };
+    }
+
+    if state.is_number() {
+        match event.key.as_str() {
+            "ArrowUp" => {
+                let edited = state.step_number(1);
+                return (edited, edited);
+            }
+            "ArrowDown" => {
+                let edited = state.step_number(-1);
+                return (edited, edited);
+            }
+            _ => {}
+        }
     }
 
     if state.is_range() {

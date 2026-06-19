@@ -6,6 +6,7 @@ use kurbo::{Affine, Rect};
 use peniko::Fill;
 
 use crate::scrollbar::{ScrollbarColors, ScrollbarRegion};
+use crate::spinner::NumberSpinner;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct InputCaret {
@@ -64,6 +65,7 @@ impl Painter {
         scrollbars: &[ScrollbarRegion],
         input_selections: &[InputSelection],
         input_carets: &[InputCaret],
+        number_spinners: &[NumberSpinner],
         theme_override: Option<ScrollbarColors>,
         target: &wgpu::Texture,
     ) {
@@ -79,6 +81,7 @@ impl Painter {
                     1.0,
                     theme_override,
                 );
+                crate::spinner::paint_number_spinners(scene, number_spinners, 1.0);
             },
             &mut self.cpu_buffer,
         );

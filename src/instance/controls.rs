@@ -750,4 +750,37 @@ impl Instance {
             snapshot.3,
         ))
     }
+
+    /// Step a `<input type="number">` value by `direction` steps and fire an
+    /// `input` event. Mirrors `update_range_from_x` for spinner button clicks.
+    pub(super) fn step_number_input(
+        &mut self,
+        node_id: usize,
+        direction: i8,
+    ) -> Option<crate::js::TickResult> {
+        let changed = {
+            let mut inputs = self.js.inputs.borrow_mut();
+            let state = inputs.get_mut(&node_id)?;
+            state.step_number(direction)
+        };
+        if !changed {
+            return Some(crate::js::TickResult::default());
+        }
+        self.refresh_input_text(node_id);
+        let snapshot = self.js.inputs.borrow().get(&node_id).map(|s| {
+            (
+                s.value().to_string(),
+                s.checked(),
+                s.selection_start(),
+                s.selection_end(),
+            )
+        })?;
+        Some(self.js.dispatch_input_event(
+            node_id,
+            &snapshot.0,
+            snapshot.1,
+            snapshot.2,
+            snapshot.3,
+        ))
+    }
 }
