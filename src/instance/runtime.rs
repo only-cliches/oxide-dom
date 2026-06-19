@@ -396,12 +396,14 @@ impl Instance {
                     crate::spinner::SpinnerHit::Up(id) => (id, 1i8),
                     crate::spinner::SpinnerHit::Down(id) => (id, -1i8),
                 };
-                if let Some(r) = self.step_number_input(node_id, direction) {
-                    result = combine_tick_result(result, r);
-                }
+                let tick = self
+                    .step_number_input(node_id, direction)
+                    .unwrap_or_default();
                 self.needs_paint = true;
-                result.needs_paint = true;
-                return result;
+                return TickResult {
+                    needs_paint: true,
+                    jobs_pending: tick.jobs_pending,
+                };
             }
         }
 
