@@ -1,6 +1,6 @@
 use rquickjs::{Ctx, Function, Result as JsResult};
-use tokio::sync::mpsc::UnboundedSender;
 use std::sync::{Arc, Mutex};
+use tokio::sync::mpsc::UnboundedSender;
 
 use crate::events::Event;
 
@@ -27,9 +27,9 @@ pub(crate) fn install<'js>(
             if payload_json.len() > MAX_SEND_EVENT_PAYLOAD_BYTES {
                 if let Ok(mut error_state) = last_error.lock() {
                     *error_state = Some(format!(
-                    "sendEvent payload too large: {} bytes (max {})",
-                    payload_json.len(),
-                    MAX_SEND_EVENT_PAYLOAD_BYTES
+                        "sendEvent payload too large: {} bytes (max {})",
+                        payload_json.len(),
+                        MAX_SEND_EVENT_PAYLOAD_BYTES
                     ));
                 }
                 return Ok(());
@@ -89,9 +89,7 @@ mod tests {
         ctx.with(|ctx| {
             let (_tx, mut _rx) = mpsc::unbounded_channel::<Event>();
             install(ctx.clone(), _tx, Arc::clone(&last_error)).unwrap();
-            let _: rquickjs::Value = ctx
-                .eval(r#"sendEvent("invalid", "{invalid")"#)
-                .unwrap();
+            let _: rquickjs::Value = ctx.eval(r#"sendEvent("invalid", "{invalid")"#).unwrap();
         });
         let err = last_error.lock().unwrap().clone();
         assert!(err.is_some_and(|msg| !msg.is_empty()));
@@ -111,7 +109,11 @@ mod tests {
         });
         assert!(rx.try_recv().is_err());
         let err = last_error.lock().unwrap().clone();
-        assert!(err.as_ref().map(|msg| msg.contains("payload too large")).unwrap_or(false));
+        assert!(
+            err.as_ref()
+                .map(|msg| msg.contains("payload too large"))
+                .unwrap_or(false)
+        );
     }
 
     #[test]
@@ -123,9 +125,7 @@ mod tests {
         drop(rx);
         ctx.with(|ctx| {
             install(ctx.clone(), tx, Arc::clone(&last_error)).unwrap();
-            let _: rquickjs::Value = ctx
-                .eval(r#"sendEvent("click", "{}")"#)
-                .unwrap();
+            let _: rquickjs::Value = ctx.eval(r#"sendEvent("click", "{}")"#).unwrap();
         });
         assert_eq!(
             last_error.lock().unwrap().clone().as_deref(),

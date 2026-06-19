@@ -12,13 +12,12 @@ use std::sync::Arc;
 
 #[path = "common/args.rs"]
 mod args;
-#[path = "common/blit.rs"]
-mod blit;
-#[path = "common/capture.rs"]
-mod capture;
 
-use blit::{BlitContext, BlitDraw};
-use solite::{FontFormat, Instance, InstanceConfig};
+use solite::{
+    FontFormat, Instance, InstanceConfig,
+    capture::capture_texture_to_png,
+    gpu::{BlitContext, BlitDraw, present_to_surface},
+};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
@@ -83,6 +82,7 @@ impl ApplicationHandler for AppState {
                 stylesheets: vec![CSS.to_string()],
                 document_scroll: false,
                 base_url: None,
+                initial_state: None,
             },
             COMPONENT,
         )
@@ -117,7 +117,7 @@ impl ApplicationHandler for AppState {
                     let view = instance.render().clone();
                     let capture_path = self.capture_path.take();
                     if let Some(path) = capture_path {
-                        match capture::capture_texture_to_png(
+                        match capture_texture_to_png(
                             &gpu.device,
                             &gpu.queue,
                             instance.texture(),
@@ -133,7 +133,7 @@ impl ApplicationHandler for AppState {
                             }
                         }
                     }
-                    let need_redraw = blit::present_to_surface(
+                    let need_redraw = present_to_surface(
                         &gpu.device,
                         &gpu.queue,
                         &gpu.surface,

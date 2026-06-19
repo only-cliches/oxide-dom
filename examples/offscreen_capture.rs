@@ -5,13 +5,11 @@
 
 #[path = "common/args.rs"]
 mod args;
-#[path = "common/capture.rs"]
-mod capture;
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use solite::{Instance, InstanceConfig};
+use solite::{Instance, InstanceConfig, capture::capture_texture_to_png};
 
 // All visual styling lives in CSS, registered through `InstanceConfig.stylesheets`.
 // The component itself only chooses which `class` each element wears.
@@ -82,6 +80,7 @@ fn main() {
             stylesheets: vec![HELLO_CSS.to_string()],
             document_scroll: false,
             base_url: None,
+            initial_state: None,
         },
         HELLO_COMPONENT,
     )
@@ -89,8 +88,7 @@ fn main() {
 
     let _ = instance.tick();
     let _ = instance.render();
-    if let Err(err) =
-        capture::capture_texture_to_png(&device, &queue, instance.texture(), output.as_path())
+    if let Err(err) = capture_texture_to_png(&device, &queue, instance.texture(), output.as_path())
     {
         eprintln!("failed to capture frame: {err}");
         std::process::exit(1);

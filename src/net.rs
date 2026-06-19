@@ -19,8 +19,8 @@
 //! `<img>` handlers without poking at blitz's private pending-images map.
 
 use std::collections::{HashMap, VecDeque};
-use std::path::PathBuf;
 use std::io::Read;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -79,10 +79,10 @@ impl SoliteNetProvider {
 
     fn record_with_error(&self, resolved_url: String, ok: bool, error: Option<String>) {
         lock(&self.inner).outbox.push_back(FetchEvent {
-                resolved_url,
-                ok,
-                error,
-            });
+            resolved_url,
+            ok,
+            error,
+        });
     }
 
     fn report_success(&self, resolved_url: String, bytes: Bytes, handler: Box<dyn NetHandler>) {
@@ -101,7 +101,9 @@ impl SoliteNetProvider {
     }
 
     fn fetch_http(&self, resolved_url: &str, handler: Box<dyn NetHandler>) {
-        let client = reqwest::blocking::Client::builder().timeout(Duration::from_secs(3)).build();
+        let client = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(3))
+            .build();
         let Ok(client) = client else {
             self.report_failure(
                 resolved_url.to_string(),
@@ -113,11 +115,7 @@ impl SoliteNetProvider {
 
         let response = client.get(resolved_url).send();
         let Ok(response) = response else {
-            self.report_failure(
-                resolved_url.to_string(),
-                handler,
-                response.unwrap_err(),
-            );
+            self.report_failure(resolved_url.to_string(), handler, response.unwrap_err());
             return;
         };
 
@@ -369,7 +367,10 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert!(!events[0].ok);
         assert_eq!(
-            events[0].error.as_ref().expect("failure should include error"),
+            events[0]
+                .error
+                .as_ref()
+                .expect("failure should include error"),
             "unsupported URL scheme: ftp"
         );
     }

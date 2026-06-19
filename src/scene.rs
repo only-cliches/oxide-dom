@@ -370,6 +370,7 @@ mod tests {
                 stylesheets: vec![],
                 document_scroll: false,
                 base_url: None,
+                initial_state: None,
             },
             TWO_INPUT_COMPONENT,
         );

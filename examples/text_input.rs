@@ -4,16 +4,15 @@ use std::time::Instant;
 
 #[path = "common/args.rs"]
 mod args;
-#[path = "common/blit.rs"]
-mod blit;
-#[path = "common/capture.rs"]
-mod capture;
-#[path = "common/keys.rs"]
-mod keys;
 
-use blit::{BlitContext, BlitDraw};
 use blitz_traits::shell::{ClipboardError, ShellProvider};
-use solite::{Instance, InstanceConfig, KeyboardEvent};
+use serde_json::json;
+use solite::{
+    Instance, InstanceConfig, KeyboardEvent,
+    capture::capture_texture_to_png,
+    gpu::{BlitContext, BlitDraw, present_to_surface},
+    winit::key_to_string,
+};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, KeyEvent, MouseButton as WinitMouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
@@ -124,20 +123,6 @@ impl ApplicationHandler for App {
 
         let (instance_width, instance_height) = (320, 80);
 
-        // When capturing, seed initial state before App() runs so the PNG
-        // shows real text rather than an empty field.
-        let component_source = if self.capture_path.is_some() {
-            TEXT_INPUT_COMPONENT.replace(
-                "render(() => App(), __SOL_ROOT__);",
-                r#"
-globalThis.state.value = "hello world";
-render(() => App(), __SOL_ROOT__);
-"#,
-            )
-        } else {
-            TEXT_INPUT_COMPONENT.to_string()
-        };
-
         let (mut instance, _events) = Instance::new(
             InstanceConfig {
                 width: instance_width,
@@ -147,8 +132,12 @@ render(() => App(), __SOL_ROOT__);
                 stylesheets: vec![TEXT_INPUT_CSS.to_string()],
                 document_scroll: false,
                 base_url: None,
+                initial_state: self
+                    .capture_path
+                    .as_ref()
+                    .map(|_| json!({ "value": "hello world" })),
             },
-            &component_source,
+            TEXT_INPUT_COMPONENT,
         )
         .expect("create instance");
         instance.set_shell_provider(Arc::new(SystemClipboard));
@@ -216,7 +205,7 @@ render(() => App(), __SOL_ROOT__);
                 if tick.needs_paint {
                     let view = instance.render().clone();
                     if let Some(path) = self.capture_path.take().filter(|_| !self.capture_done) {
-                        match capture::capture_texture_to_png(
+                        match capture_texture_to_png(
                             &gpu.device,
                             &gpu.queue,
                             instance.texture(),
@@ -238,7 +227,13 @@ render(() => App(), __SOL_ROOT__);
                         &gpu.surface,
                         &gpu.config,
                         &gpu.blit,
-                        &view,
+                        &[BlitDraw {
+                            view,
+                            x: 0,
+                            y: 0,
+                            width: gpu.config.width,
+                            height: gpu.config.height,
+                        }],
                     );
                     if need_redraw {
                         if let Some(window) = &self.window {
@@ -306,8 +301,7 @@ render(() => App(), __SOL_ROOT__);
 
                 if let Some(button) = button {
                     if let Some(instance) = self.instance.as_mut() {
-                        if state == ElementState::Pressed && button == solite::MouseButton::Left
-                        {
+                        if state == ElementState::Pressed && button == solite::MouseButton::Left {
                             println!("text_input: mouse down at ({x:.1}, {y:.1})");
                         }
                         let event = match state {
@@ -341,7 +335,7 @@ render(() => App(), __SOL_ROOT__);
                 ..
             } => {
                 if let Some(instance) = self.instance.as_mut() {
-                    let key = keys::key_to_string(&logical_key, text.as_deref());
+                    let key = key_to_string(&logical_key, text.as_deref());
                     let code = match physical_key {
                         PhysicalKey::Code(code) => format!("{:?}", code),
                         _ => String::new(),
@@ -380,7 +374,7 @@ render(() => App(), __SOL_ROOT__);
                 ..
             } => {
                 if let Some(instance) = self.instance.as_mut() {
-                    let key = keys::key_to_string(&logical_key, text.as_deref());
+                    let key = key_to_string(&logical_key, text.as_deref());
                     let code = match physical_key {
                         PhysicalKey::Code(code) => format!("{:?}", code),
                         _ => String::new(),
@@ -503,30 +497,6 @@ async fn init_gpu(window: Arc<Window>) -> Gpu {
         config,
         blit,
     }
-}
-
-fn present_to_surface(
-    device: &Arc<wgpu::Device>,
-    queue: &Arc<wgpu::Queue>,
-    surface: &wgpu::Surface<'static>,
-    config: &wgpu::SurfaceConfiguration,
-    blit: &BlitContext,
-    view: &wgpu::TextureView,
-) -> bool {
-    blit::present_to_surface(
-        device,
-        queue,
-        surface,
-        config,
-        blit,
-        &[BlitDraw {
-            view: view.clone(),
-            x: 0,
-            y: 0,
-            width: config.width,
-            height: config.height,
-        }],
-    )
 }
 
 fn main() {

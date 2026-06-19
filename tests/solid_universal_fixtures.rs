@@ -83,7 +83,8 @@ fn normalize_allowed_integration_differences(source: &str) -> String {
     for line in source.lines() {
         let trimmed = line.trim();
         if trimmed.starts_with("import {")
-            && (trimmed.contains("from \"r-custom\"") || trimmed.contains("from \"solite-runtime\""))
+            && (trimmed.contains("from \"r-custom\"")
+                || trimmed.contains("from \"solite-runtime\""))
         {
             continue;
         }

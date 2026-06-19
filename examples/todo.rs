@@ -1,18 +1,13 @@
 use std::sync::Arc;
 
-#[path = "common/args.rs"]
-mod args;
-#[path = "common/blit.rs"]
-mod blit;
-#[path = "common/capture.rs"]
-mod capture;
-
-use blit::{BlitContext, BlitDraw};
 use blitz_traits::shell::{ClipboardError, ShellProvider};
 #[cfg(feature = "jsx-compiler")]
 use solite::compile_component_source;
-use solite::winit::WinitBridge;
-use solite::{Instance, InstanceConfig, Scene, SurfaceRect};
+use solite::{
+    Instance, InstanceConfig, Scene, SurfaceRect,
+    gpu::{BlitContext, BlitDraw, present_to_surface},
+    winit::WinitBridge,
+};
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalPosition;
 use winit::event::WindowEvent;
@@ -84,6 +79,7 @@ impl ApplicationHandler for App {
                 stylesheets: vec![TODO_CSS.to_string()],
                 document_scroll: true,
                 base_url: None,
+                initial_state: None,
             },
             &todo_js,
         )
@@ -130,7 +126,7 @@ impl ApplicationHandler for App {
                     }
 
                     if !draws.is_empty() {
-                        let _did_redraw = blit::present_to_surface(
+                        let _did_redraw = present_to_surface(
                             &gpu.device,
                             &gpu.queue,
                             &gpu.surface,

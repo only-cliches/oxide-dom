@@ -19,10 +19,10 @@ use url::Url;
 
 use std::fmt;
 
-#[cfg(feature = "jsx-compiler")]
-use solite_build as compiler;
 use crate::events::{Event, KeyboardEvent};
 use crate::state::StateHandle;
+#[cfg(feature = "jsx-compiler")]
+use solite_build as compiler;
 
 const SOLID_RUNTIME: &str = include_str!("../../js/dist/runtime.js");
 const SOLID_JS_RUNTIME: &str = r#"export { createEffect, createMemo, createSignal, onCleanup, untrack } from "solite-runtime";"#;
@@ -152,8 +152,12 @@ pub(crate) fn resolve_virtual_entrypoint(files: &[VirtualSourceFile]) -> String 
         }
     }
 
-    best.map(|(_, _, _, path)| path)
-        .unwrap_or_else(|| files.first().map(|file| file.path.clone()).unwrap_or_default())
+    best.map(|(_, _, _, path)| path).unwrap_or_else(|| {
+        files
+            .first()
+            .map(|file| file.path.clone())
+            .unwrap_or_default()
+    })
 }
 
 fn compile_module_source_text(path: &Path, source: &str) -> rquickjs::Result<String> {
@@ -249,7 +253,8 @@ impl JsContext {
         }
 
         configure_file_module_loader(&runtime, file_resolver, SoliteModuleLoader);
-        let context = Context::full(&runtime).map_err(|err| JsContextError::ContextInit(err.to_string()))?;
+        let context =
+            Context::full(&runtime).map_err(|err| JsContextError::ContextInit(err.to_string()))?;
         let handlers = Rc::new(RefCell::new(HandlerMap::new()));
         let inputs = crate::input::new_registry();
         let selects = crate::select::new_registry();
@@ -280,7 +285,8 @@ impl JsContext {
             VirtualModuleResolver::new(Rc::clone(&modules)),
             VirtualModuleLoader::new(modules),
         );
-        let context = Context::full(&runtime).map_err(|err| JsContextError::ContextInit(err.to_string()))?;
+        let context =
+            Context::full(&runtime).map_err(|err| JsContextError::ContextInit(err.to_string()))?;
         let handlers = Rc::new(RefCell::new(HandlerMap::new()));
         let inputs = crate::input::new_registry();
         let selects = crate::select::new_registry();
@@ -304,9 +310,17 @@ impl JsContext {
         component_source: &str,
         container_id: usize,
         state: &StateHandle,
+        initial_state: Option<serde_json::Value>,
         event_tx: UnboundedSender<Event>,
     ) -> Result<(), JsContextError> {
-        self.mount_with_module_path("app", component_source, container_id, state, event_tx)
+        self.mount_with_module_path(
+            "app",
+            component_source,
+            container_id,
+            state,
+            initial_state,
+            event_tx,
+        )
     }
 
     pub(crate) fn mount_with_module_path(
@@ -315,6 +329,7 @@ impl JsContext {
         component_source: &str,
         container_id: usize,
         state: &StateHandle,
+        initial_state: Option<serde_json::Value>,
         event_tx: UnboundedSender<Event>,
     ) -> Result<(), JsContextError> {
         let bridge = DomBridge::new(
@@ -340,6 +355,18 @@ impl JsContext {
                 Arc::clone(&self.last_send_event_error),
             )
             .map_err(|err| JsContextError::MountError(err.to_string()))?;
+
+            if let Some(initial_state) = initial_state {
+                let seed = serde_json::to_string(&initial_state)
+                    .map_err(|err| JsContextError::MountError(format!("failed to serialize initial state: {err}")))?;
+                let seed_code = format!(
+                    r#"globalThis.__SOL_INITIAL_STATE = {seed};"#,
+                );
+                let _: rquickjs::Value = ctx
+                    .eval(seed_code)
+                    .unwrap_or(rquickjs::Value::new_null(ctx.clone()));
+            }
+
             ctx.globals()
                 .set("__SOL_ROOT__", container_id)
                 .map_err(|err| JsContextError::MountError(err.to_string()))?;
@@ -452,7 +479,10 @@ impl JsContext {
     }
 
     pub(crate) fn take_send_event_error(&self) -> Option<String> {
-        self.last_send_event_error.lock().ok().and_then(|mut error| error.take())
+        self.last_send_event_error
+            .lock()
+            .ok()
+            .and_then(|mut error| error.take())
     }
 
     /// Walk the ancestor chain of `start_id` looking for a registered handler
@@ -1322,6 +1352,7 @@ mod tests {
             &module_source,
             container_id,
             &state,
+            None,
             tx,
         );
 
@@ -1368,6 +1399,7 @@ mod tests {
             &source,
             container_id,
             &state,
+            None,
             tx,
         );
         let d = doc.borrow();
@@ -1412,6 +1444,7 @@ mod tests {
             &source,
             container_id,
             &state,
+            None,
             tx,
         );
 
@@ -1532,6 +1565,7 @@ mod tests {
             "#,
             container_id,
             &state,
+            None,
             tx,
         );
 
@@ -1569,6 +1603,7 @@ mod tests {
             "#,
             container_id,
             &state,
+            None,
             tx,
         );
 
@@ -1604,6 +1639,7 @@ mod tests {
             "#,
             container_id,
             &state,
+            None,
             tx,
         );
 
@@ -1661,6 +1697,7 @@ mod tests {
             "#,
             container_id,
             &state,
+            None,
             tx,
         );
 
@@ -1713,6 +1750,7 @@ mod tests {
             "#,
             container_id,
             &state,
+            None,
             tx,
         );
 
@@ -1763,6 +1801,7 @@ mod tests {
             "#,
             container_id,
             &state,
+            None,
             tx,
         );
 
@@ -1805,6 +1844,7 @@ mod tests {
             "#,
             container_id,
             &state,
+            None,
             tx,
         );
 
@@ -1846,8 +1886,7 @@ mod tests {
     #[test]
     fn set_property_via_module_eval_no_solid() {
         let doc = Rc::new(RefCell::new(BaseDocument::new(DocumentConfig::default())));
-        let js = JsContext::new(Rc::clone(&doc), test_base_url())
-            .expect("create JS context");
+        let js = JsContext::new(Rc::clone(&doc), test_base_url()).expect("create JS context");
         let state = StateHandle::new(json!({}));
         let (tx, _) = mpsc::unbounded_channel();
 
@@ -1862,6 +1901,7 @@ mod tests {
             "#,
             0, // document root as container
             &state,
+            None,
             tx,
         );
 
@@ -1892,8 +1932,7 @@ mod tests {
             d.mutate().append_children(0, &[cid]);
             cid
         };
-        let js = JsContext::new(Rc::clone(&doc), test_base_url())
-            .expect("create JS context");
+        let js = JsContext::new(Rc::clone(&doc), test_base_url()).expect("create JS context");
         (doc, js, container_id)
     }
 
@@ -1920,6 +1959,7 @@ mod tests {
             "#,
             container_id,
             &state,
+            None,
             tx,
         );
         let d = doc.borrow();
@@ -1957,6 +1997,7 @@ mod tests {
             "#,
             container_id,
             &state,
+            None,
             tx,
         );
 
@@ -1999,6 +2040,7 @@ mod tests {
             "#,
             container_id,
             &state,
+            None,
             tx,
         );
 
@@ -2049,6 +2091,7 @@ mod tests {
             "#,
             container_id,
             &state,
+            None,
             tx,
         );
 
@@ -2111,6 +2154,7 @@ mod tests {
             "#,
             container_id,
             &state,
+            None,
             tx,
         );
 
@@ -2154,6 +2198,7 @@ mod tests {
             "#,
             container_id,
             &state,
+            None,
             tx,
         );
 
@@ -2187,6 +2232,7 @@ mod tests {
             "#,
             container_id,
             &state,
+            None,
             tx,
         );
 
@@ -2223,6 +2269,7 @@ mod tests {
             "#,
             container_id,
             &state,
+            None,
             tx,
         );
 
@@ -2272,6 +2319,7 @@ mod tests {
             "#,
             container_id,
             &state,
+            None,
             tx,
         );
 
@@ -2323,6 +2371,7 @@ mod tests {
             "#,
             container_id,
             &state,
+            None,
             tx,
         );
 
@@ -2372,6 +2421,7 @@ mod tests {
             "#,
             container_id,
             &state,
+            None,
             tx,
         );
 
@@ -2409,6 +2459,7 @@ mod tests {
             "#,
             container_id,
             &state,
+            None,
             tx,
         );
 
@@ -2453,6 +2504,7 @@ mod tests {
             "#,
             cid1,
             &state,
+            None,
             tx1,
         );
 
@@ -2467,6 +2519,7 @@ mod tests {
             "#,
             cid2,
             &state,
+            None,
             tx2,
         );
 

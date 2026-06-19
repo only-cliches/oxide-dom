@@ -89,13 +89,18 @@ impl Generated {
         out.push_str("/// Entry module the runtime resolves and mounts first.\n");
         out.push_str(&format!("pub const ENTRY: &str = {:?};\n\n", self.entry));
 
-        out.push_str("/// All transpiled JS modules and raw CSS for this app, ready to mount via\n");
+        out.push_str(
+            "/// All transpiled JS modules and raw CSS for this app, ready to mount via\n",
+        );
         out.push_str("/// [`solite::Instance::new_from_virtual_files`].\n");
         out.push_str("pub fn modules() -> Vec<solite::VirtualSourceFile> {\n    vec![\n");
         for module in &self.modules {
             let (open, close) = raw_string_delims(&module.source);
             out.push_str("        solite::VirtualSourceFile {\n");
-            out.push_str(&format!("            path: {:?}.to_string(),\n", module.path));
+            out.push_str(&format!(
+                "            path: {:?}.to_string(),\n",
+                module.path
+            ));
             out.push_str(&format!(
                 "            source: {open}{}{close}.to_string(),\n",
                 module.source
@@ -209,7 +214,10 @@ pub fn generate(src_dir: &Path) -> Result<Generated, BundleError> {
 /// Transpile the project rooted at `src_dir` and write the generated Rust source
 /// to `out`, returning the [`Generated`] result (whose `sources` are useful for
 /// `cargo:rerun-if-changed`).
-pub fn bundle_to_file(src_dir: impl AsRef<Path>, out: impl AsRef<Path>) -> Result<Generated, BundleError> {
+pub fn bundle_to_file(
+    src_dir: impl AsRef<Path>,
+    out: impl AsRef<Path>,
+) -> Result<Generated, BundleError> {
     let generated = generate(src_dir.as_ref())?;
     let out = out.as_ref();
     std::fs::write(out, generated.to_rust_source())
@@ -339,7 +347,10 @@ mod tests {
         assert_eq!(generated.entry, "index.js");
         let paths: Vec<&str> = generated.modules.iter().map(|m| m.path.as_str()).collect();
         assert!(paths.contains(&"index.js"), "missing index.js: {paths:?}");
-        assert!(paths.contains(&"styles.css"), "missing styles.css: {paths:?}");
+        assert!(
+            paths.contains(&"styles.css"),
+            "missing styles.css: {paths:?}"
+        );
         // sources are the on-disk files read — usable for cargo:rerun-if-changed.
         assert!(generated.sources.iter().any(|p| p.ends_with("index.tsx")));
         assert!(generated.sources.iter().any(|p| p.ends_with("styles.css")));

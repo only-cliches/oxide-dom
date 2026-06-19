@@ -1068,7 +1068,9 @@ mod tests {
             bridge.install(ctx.clone()).unwrap();
             let node_id: usize = ctx.eval("__sol_createElement('div')").unwrap();
             let _: Value = ctx
-                .eval(format!("__sol_setProperty({node_id}, 'style', 'color:red')"))
+                .eval(format!(
+                    "__sol_setProperty({node_id}, 'style', 'color:red')"
+                ))
                 .unwrap();
             let d = doc.borrow();
             let elem = d.get_node(node_id).unwrap().element_data().unwrap();
@@ -1110,7 +1112,9 @@ mod tests {
             }
 
             let _: Value = ctx
-                .eval(format!("__sol_setProperty({select_id}, 'value', 'option1')"))
+                .eval(format!(
+                    "__sol_setProperty({select_id}, 'value', 'option1')"
+                ))
                 .unwrap();
 
             {

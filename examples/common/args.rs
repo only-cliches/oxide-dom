@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 /// Parse a `--capture <path>` / `--capture=<path>` CLI flag, with a fallback to
-/// the `OXIDE_DOM_CAPTURE` env var. When present, examples capture the next
+/// the `SOLITE_CAPTURE` env var. When present, examples capture the next
 /// painted frame to a PNG at that path and exit.
 #[allow(dead_code)]
 pub fn capture_path_from_cli() -> Option<PathBuf> {
@@ -15,5 +15,5 @@ pub fn capture_path_from_cli() -> Option<PathBuf> {
         }
     }
 
-    std::env::var_os("OXIDE_DOM_CAPTURE").map(PathBuf::from)
+    std::env::var_os("SOLITE_CAPTURE").map(PathBuf::from)
 }

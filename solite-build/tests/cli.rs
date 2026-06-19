@@ -111,7 +111,10 @@ fn build_errors_when_no_entry() {
         .args(["bundle", work.to_str().unwrap(), out.to_str().unwrap()])
         .output()
         .unwrap();
-    assert!(!output.status.success(), "build should fail without an entry");
+    assert!(
+        !output.status.success(),
+        "build should fail without an entry"
+    );
     assert!(!out.exists(), "no output should be written on failure");
 
     let _ = fs::remove_dir_all(&work);

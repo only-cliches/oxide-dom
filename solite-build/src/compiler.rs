@@ -124,8 +124,7 @@ pub fn map_module_specifiers(
     }
 
     let specifiers: Vec<String> = specs.iter().map(|spec| spec.value.clone()).collect();
-    let replacements: Vec<Option<String>> =
-        specs.iter().map(|spec| rewrite(&spec.value)).collect();
+    let replacements: Vec<Option<String>> = specs.iter().map(|spec| rewrite(&spec.value)).collect();
 
     // Apply replacements back-to-front so earlier byte offsets stay valid.
     let mut output = js_source.to_string();
@@ -907,13 +906,15 @@ impl JsxGenerator {
             JsxChild::Expr(expr) if literal_text_value(&prop_expr(expr)).is_some() => {
                 let text = match literal_text_value(&prop_expr(expr)) {
                     Some(text) => text,
-                    None => return ChildBuild {
-                        id: None,
-                        expr: Some(child_expr(expr)),
-                        declarations: Vec::new(),
-                        exprs: Vec::new(),
-                        dynamics: Vec::new(),
-                    },
+                    None => {
+                        return ChildBuild {
+                            id: None,
+                            expr: Some(child_expr(expr)),
+                            declarations: Vec::new(),
+                            exprs: Vec::new(),
+                            dynamics: Vec::new(),
+                        };
+                    }
                 };
                 self.text_child(&text, multi)
             }

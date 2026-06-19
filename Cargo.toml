@@ -13,6 +13,11 @@ resolver = "2"
 default = ["with_system_fonts", "jsx-compiler"]
 with_system_fonts = ["blitz-dom/system_fonts"]
 jsx-compiler = ["dep:solite-build"]
+# Opt-in GPU bootstrap helpers (`solite::gpu`): device/queue + windowed surface
+# setup. Adds no dependencies beyond wgpu (already required); gates API only.
+gpu = []
+# Optional screenshot capture helper (`solite::capture`) with opt-in `image` support.
+capture = ["dep:image"]
 # Opt-in winit translation layer. Pulls in `winit` as a regular dep so hosts
 # can use the `solite::winit` helpers to forward window events into an
 # `Instance` without hand-rolling key/mouse/modifier translation.
@@ -41,6 +46,7 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 bytes = "1"
 solite-build = { version = "0.1.0", path = "solite-build", optional = true }
 winit = { version = "0.30", optional = true }
+image = { version = "0.25", optional = true }
 
 [dev-dependencies]
 winit = "0.30"
@@ -57,42 +63,47 @@ arboard = "3.4"
 [[example]]
 name = "winit_window"
 path = "examples/winit_window.rs"
+required-features = ["winit", "gpu", "capture"]
 
 [[example]]
 name = "two_instances"
 path = "examples/two_instances.rs"
+required-features = ["winit", "gpu", "capture"]
 
 [[example]]
 name = "text_input"
 path = "examples/text_input.rs"
+required-features = ["winit", "gpu", "capture"]
 
 [[example]]
 name = "kitchen_sink"
 path = "examples/kitchen_sink.rs"
-required-features = ["winit"]
+required-features = ["winit", "gpu", "capture"]
 
 [[example]]
 name = "todo"
 path = "examples/todo.rs"
-required-features = ["winit"]
+required-features = ["winit", "gpu"]
 
 [[example]]
 name = "offscreen_capture"
 path = "examples/offscreen_capture.rs"
+required-features = ["capture"]
 
 [[example]]
 name = "images"
 path = "examples/images.rs"
-required-features = ["winit"]
+required-features = ["winit", "gpu", "capture"]
 
 [[example]]
 name = "custom_font"
 path = "examples/custom_font.rs"
-required-features = ["winit"]
+required-features = ["winit", "gpu", "capture"]
 
 [[example]]
 name = "select_popup_capture"
 path = "examples/select_popup_capture.rs"
+required-features = ["capture"]
 
 [[example]]
 name = "perf_animate_elements"

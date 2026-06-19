@@ -16,7 +16,11 @@ mod bundle;
 mod init;
 
 #[derive(Parser)]
-#[command(name = "solite-build", about = "Scaffold and bundle solite apps", version)]
+#[command(
+    name = "solite-build",
+    about = "Scaffold and bundle solite apps",
+    version
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,

@@ -16,10 +16,10 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+use serde_json::json;
 #[cfg(feature = "jsx-compiler")]
 use solite::compile_component_source;
 use solite::{Instance, InstanceConfig};
-use serde_json::json;
 use wgpu;
 
 async fn init_device() -> (std::sync::Arc<wgpu::Device>, std::sync::Arc<wgpu::Queue>) {
@@ -163,6 +163,7 @@ fn run_benchmark(
             stylesheets: vec![],
             document_scroll: false,
             base_url: None,
+            initial_state: None,
         },
         &component_source,
     )

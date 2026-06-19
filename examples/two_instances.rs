@@ -11,13 +11,12 @@ use std::sync::Arc;
 
 #[path = "common/args.rs"]
 mod args;
-#[path = "common/blit.rs"]
-mod blit;
-#[path = "common/capture.rs"]
-mod capture;
-use blit::{BlitContext, BlitDraw};
 
-use solite::{Instance, InstanceConfig};
+use solite::{
+    Instance, InstanceConfig,
+    capture::{build_capture_path, capture_texture_to_png},
+    gpu::{BlitContext, BlitDraw, present_to_surface},
+};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, KeyEvent, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
@@ -91,6 +90,7 @@ impl ApplicationHandler for TwoApp {
                 stylesheets: vec![SHARED_CSS.to_string()],
                 document_scroll: false,
                 base_url: None,
+                initial_state: None,
             },
             COMP_A,
         )
@@ -104,6 +104,7 @@ impl ApplicationHandler for TwoApp {
                 stylesheets: vec![SHARED_CSS.to_string()],
                 document_scroll: false,
                 base_url: None,
+                initial_state: None,
             },
             COMP_B,
         )
@@ -189,8 +190,8 @@ impl ApplicationHandler for TwoApp {
                     if let Some(gpu) = &self.gpu {
                         let mut failure: Option<String> = None;
                         for (label, instance) in [("instance-a", &*a), ("instance-b", &*b)] {
-                            let destination = capture::build_capture_path(&path, Some(label));
-                            match capture::capture_texture_to_png(
+                            let destination = build_capture_path(&path, Some(label));
+                            match capture_texture_to_png(
                                 &gpu.device,
                                 &gpu.queue,
                                 instance.texture(),
@@ -326,17 +327,6 @@ async fn init_gpu(window: Arc<Window>) -> Gpu {
         config,
         blit,
     }
-}
-
-fn present_to_surface(
-    device: &Arc<wgpu::Device>,
-    queue: &Arc<wgpu::Queue>,
-    surface: &wgpu::Surface<'static>,
-    config: &wgpu::SurfaceConfiguration,
-    blit: &BlitContext,
-    draws: &[BlitDraw],
-) -> bool {
-    blit::present_to_surface(device, queue, surface, config, blit, draws)
 }
 
 fn main() {

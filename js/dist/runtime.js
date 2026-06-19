@@ -1306,7 +1306,13 @@ var runtimeState = {
     }
   }
 };
+(globalThis.__SOL_INITIAL_STATE != null && runtimeState.__init(globalThis.__SOL_INITIAL_STATE));
 globalThis.__sol_state = runtimeState;
+try {
+  delete globalThis.__SOL_INITIAL_STATE;
+} catch (_err) {
+  globalThis.__SOL_INITIAL_STATE = void 0;
+}
 globalThis.__sol_apply_state_patch = (path, value_json) => {
   let value = null;
   try {

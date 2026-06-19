@@ -4,13 +4,11 @@
 
 #[path = "common/args.rs"]
 mod args;
-#[path = "common/capture.rs"]
-mod capture;
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use solite::{Instance, InstanceConfig, MouseButton, MouseEvent};
+use solite::{Instance, InstanceConfig, MouseButton, MouseEvent, capture::capture_texture_to_png};
 
 // Mirror `kitchen_sink`'s JSX select pattern: an `onChange` handler that
 // writes global state and a controlled `value` binding so this example
@@ -120,6 +118,7 @@ fn main() {
             stylesheets: vec![CSS.to_string()],
             document_scroll: false,
             base_url: None,
+            initial_state: None,
         },
         COMPONENT,
     )
@@ -168,8 +167,7 @@ fn main() {
     let _ = instance.tick();
     let _ = instance.render();
 
-    if let Err(err) =
-        capture::capture_texture_to_png(&device, &queue, instance.texture(), output.as_path())
+    if let Err(err) = capture_texture_to_png(&device, &queue, instance.texture(), output.as_path())
     {
         eprintln!("failed to capture frame: {err}");
         std::process::exit(1);

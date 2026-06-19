@@ -6,19 +6,16 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 #[path = "common/args.rs"]
 mod args;
-#[path = "common/blit.rs"]
-mod blit;
-#[path = "common/capture.rs"]
-mod capture;
 
-use blit::{BlitContext, BlitDraw};
 use blitz_traits::shell::{ClipboardError, ShellProvider};
+use serde_json::json;
 #[cfg(feature = "jsx-compiler")]
 use solite::compile_component_file;
 use solite::winit::{WinitBridge, WinitPollScheduler};
 use solite::{
-    Event, FileWatch, Instance, InstanceConfig, Scene, SourceChangeSummary, StylesheetId,
-    SurfaceRect, TickResult,
+    Instance, InstanceConfig, Scene, SourceChangeSummary, StylesheetId, SurfaceRect, TickResult,
+    capture::{build_capture_path, capture_texture_to_png},
+    gpu::{BlitContext, BlitDraw, present_to_surface},
 };
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalPosition;
@@ -409,8 +406,8 @@ impl ApplicationHandler for App {
                         let mut any_failed = false;
                         for surface in self.scene.surfaces() {
                             let label = surface.data.label.replace(' ', "_");
-                            let destination = capture::build_capture_path(&path, Some(&label));
-                            match capture::capture_texture_to_png(
+                            let destination = build_capture_path(&path, Some(&label));
+                            match capture_texture_to_png(
                                 &gpu.device,
                                 &gpu.queue,
                                 surface.instance.texture(),
@@ -546,17 +543,6 @@ fn combine_tick_result(a: TickResult, b: TickResult) -> TickResult {
     }
 }
 
-fn present_to_surface(
-    device: &Arc<wgpu::Device>,
-    queue: &Arc<wgpu::Queue>,
-    surface: &wgpu::Surface<'static>,
-    config: &wgpu::SurfaceConfiguration,
-    blit: &BlitContext,
-    draws: &[BlitDraw],
-) -> bool {
-    blit::present_to_surface(device, queue, surface, config, blit, draws)
-}
-
 fn create_demo_project() -> io::Result<DemoProject> {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let source_dir = manifest_dir.join(KITCHEN_SINK_DIR);
@@ -641,29 +627,6 @@ fn mount_targets(
     for (index, &(x, width)) in layouts.iter().enumerate() {
         let label = labels.get(index).copied().unwrap_or("Target");
 
-        // The JSX reads state via `globalThis.state.X` once during App()'s
-        // first invocation, so seeding via state.set() after mount doesn't
-        // reach the rendered DOM. Inject the per-instance state directly into
-        // the module so the values are present before App() runs.
-        let seed = format!(
-            "globalThis.state.targetLabel = {label};\n\
-             globalThis.state.targetIndex = {index};\n\
-             globalThis.state.rows = 24;\n\
-             globalThis.state.text = \"\";\n\
-             globalThis.state.number = \"\";\n\
-             globalThis.state.range = 50;\n\
-             globalThis.state.checkboxChecked = false;\n\
-             globalThis.state.radioA = false;\n\
-             globalThis.state.radioB = false;\n\
-             globalThis.state.password = \"\";\n",
-            label = serde_json::to_string(label).unwrap(),
-            index = index,
-        );
-        let seeded_source = bundle_source.replace(
-            "render(() => App(), __SOL_ROOT__);",
-            &format!("{seed}render(() => App(), __SOL_ROOT__);"),
-        );
-
         let (instance, rx) = Instance::new(
             InstanceConfig {
                 width,
@@ -673,8 +636,20 @@ fn mount_targets(
                 stylesheets: vec![],
                 document_scroll: true,
                 base_url: None,
+                initial_state: Some(json!({
+                    "targetLabel": label,
+                    "targetIndex": index,
+                    "rows": 24,
+                    "text": "",
+                    "number": 50,
+                    "range": 50,
+                    "checkboxChecked": false,
+                    "radioA": false,
+                    "radioB": false,
+                    "password": "",
+                })),
             },
-            &seeded_source,
+            &bundle_source,
         )
         .expect("create instance");
         let mut instance = instance;

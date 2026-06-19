@@ -279,7 +279,16 @@ const runtimeState = {
     }
   },
 };
+(globalThis as any).__SOL_INITIAL_STATE != null &&
+  runtimeState.__init((globalThis as any).__SOL_INITIAL_STATE);
 (globalThis as any).__sol_state = runtimeState;
+try {
+  // Keep bootstrap data transient so repeated mounts in the same page keep
+  // behavior deterministic.
+  delete (globalThis as any).__SOL_INITIAL_STATE;
+} catch (_err) {
+  (globalThis as any).__SOL_INITIAL_STATE = undefined;
+}
 
 // Rust side applies Rust-origin state patches here (no feedback through __sol_state_set).
 globalThis.__sol_apply_state_patch = (path: string, value_json: string) => {
