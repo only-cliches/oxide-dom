@@ -9,6 +9,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use solite::{Instance, InstanceConfig, MouseButton, MouseEvent, capture::capture_texture_to_png};
+#[cfg(feature = "jsx-compiler")]
+use solite::compile_component_source;
 
 // Mirror `kitchen_sink`'s JSX select pattern: an `onChange` handler that
 // writes global state and a controlled `value` binding so this example
@@ -109,6 +111,7 @@ fn main() {
         args::capture_path_from_cli().unwrap_or_else(|| PathBuf::from("captures/select_popup.png"));
 
     let (device, queue) = pollster::block_on(init_device());
+    let component = compile_select_popup_capture_component_source(COMPONENT);
     let (mut instance, _rx) = Instance::new(
         InstanceConfig {
             width: 420,
@@ -120,7 +123,7 @@ fn main() {
             base_url: None,
             initial_state: None,
         },
-        COMPONENT,
+        &component,
     )
     .expect("create instance");
 
@@ -173,4 +176,15 @@ fn main() {
         std::process::exit(1);
     }
     println!("captured to {}", output.display());
+}
+
+#[cfg(feature = "jsx-compiler")]
+fn compile_select_popup_capture_component_source(component_source: &str) -> String {
+    compile_component_source(std::path::Path::new("select_popup_capture.jsx"), component_source)
+        .expect("JSX compile failed")
+}
+
+#[cfg(not(feature = "jsx-compiler"))]
+fn compile_select_popup_capture_component_source(_component_source: &str) -> String {
+    panic!("select_popup_capture example requires the `jsx-compiler` feature");
 }

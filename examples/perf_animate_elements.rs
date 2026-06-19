@@ -230,8 +230,11 @@ fn compile_component_source_or_identity(source: &str) -> std::io::Result<String>
 }
 
 #[cfg(not(feature = "jsx-compiler"))]
-fn compile_component_source_or_identity(source: &str) -> std::io::Result<String> {
-    Ok(source.to_string())
+fn compile_component_source_or_identity(_source: &str) -> std::io::Result<String> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "perf_animate_elements example requires the `jsx-compiler` feature",
+    ))
 }
 
 fn main() {

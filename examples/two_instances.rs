@@ -17,6 +17,8 @@ use solite::{
     capture::{build_capture_path, capture_texture_to_png},
     gpu::{BlitContext, BlitDraw, present_to_surface},
 };
+#[cfg(feature = "jsx-compiler")]
+use solite::compile_component_source;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, KeyEvent, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
@@ -81,6 +83,8 @@ impl ApplicationHandler for TwoApp {
 
         // Both instances share the same Device + Queue via Arc::clone, and
         // both boot with the same CSS so the panels stay visually consistent.
+        let component_a = compile_two_instances_component_source(COMP_A);
+        let component_b = compile_two_instances_component_source(COMP_B);
         let (a, _rx_a) = Instance::new(
             InstanceConfig {
                 width: 200,
@@ -92,7 +96,7 @@ impl ApplicationHandler for TwoApp {
                 base_url: None,
                 initial_state: None,
             },
-            COMP_A,
+            &component_a,
         )
         .expect("create first instance");
         let (b, _rx_b) = Instance::new(
@@ -106,7 +110,7 @@ impl ApplicationHandler for TwoApp {
                 base_url: None,
                 initial_state: None,
             },
-            COMP_B,
+            &component_b,
         )
         .expect("create second instance");
 
@@ -259,6 +263,17 @@ impl ApplicationHandler for TwoApp {
             _ => {}
         }
     }
+}
+
+#[cfg(feature = "jsx-compiler")]
+fn compile_two_instances_component_source(component_source: &str) -> String {
+    compile_component_source(std::path::Path::new("two_instances.jsx"), component_source)
+        .expect("JSX compile failed")
+}
+
+#[cfg(not(feature = "jsx-compiler"))]
+fn compile_two_instances_component_source(_component_source: &str) -> String {
+    panic!("two_instances example requires the `jsx-compiler` feature");
 }
 
 async fn init_gpu(window: Arc<Window>) -> Gpu {

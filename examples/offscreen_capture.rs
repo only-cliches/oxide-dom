@@ -10,6 +10,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use solite::{Instance, InstanceConfig, capture::capture_texture_to_png};
+#[cfg(feature = "jsx-compiler")]
+use solite::compile_component_source;
 
 // All visual styling lives in CSS, registered through `InstanceConfig.stylesheets`.
 // The component itself only chooses which `class` each element wears.
@@ -71,6 +73,7 @@ fn main() {
         .unwrap_or_else(|| PathBuf::from("/tmp/solite-headless-capture.png"));
 
     let (device, queue) = pollster::block_on(init_device());
+    let component = compile_offscreen_capture_component_source(HELLO_COMPONENT);
     let (mut instance, _rx) = Instance::new(
         InstanceConfig {
             width: 200,
@@ -82,7 +85,7 @@ fn main() {
             base_url: None,
             initial_state: None,
         },
-        HELLO_COMPONENT,
+        &component,
     )
     .expect("create instance");
 
@@ -95,4 +98,15 @@ fn main() {
     }
 
     println!("captured to {}", output.display());
+}
+
+#[cfg(feature = "jsx-compiler")]
+fn compile_offscreen_capture_component_source(component_source: &str) -> String {
+    compile_component_source(std::path::Path::new("offscreen_capture.jsx"), component_source)
+        .expect("JSX compile failed")
+}
+
+#[cfg(not(feature = "jsx-compiler"))]
+fn compile_offscreen_capture_component_source(_component_source: &str) -> String {
+    panic!("offscreen_capture example requires the `jsx-compiler` feature");
 }

@@ -9,6 +9,8 @@ use solite::{
     capture::capture_texture_to_png,
     gpu::{BlitContext, BlitDraw, present_to_surface},
 };
+#[cfg(feature = "jsx-compiler")]
+use solite::compile_component_source;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
@@ -62,6 +64,7 @@ impl ApplicationHandler for App {
             .with_inner_size(winit::dpi::LogicalSize::new(200u32, 200u32));
         let window = Arc::new(event_loop.create_window(attrs).expect("window"));
         let gpu = pollster::block_on(init_gpu(window.clone()));
+        let component = compile_winit_component_source(HELLO_COMPONENT);
 
         let (instance, _events) = Instance::new(
             InstanceConfig {
@@ -74,7 +77,7 @@ impl ApplicationHandler for App {
                 base_url: None,
                 initial_state: None,
             },
-            HELLO_COMPONENT,
+            &component,
         )
         .expect("create instance");
 
@@ -235,4 +238,15 @@ fn main() {
         capture_done: false,
     };
     event_loop.run_app(&mut app).expect("run");
+}
+
+#[cfg(feature = "jsx-compiler")]
+fn compile_winit_component_source(component_source: &str) -> String {
+    compile_component_source(std::path::Path::new("App.jsx"), component_source)
+        .expect("JSX compile failed")
+}
+
+#[cfg(not(feature = "jsx-compiler"))]
+fn compile_winit_component_source(_component_source: &str) -> String {
+    panic!("winit_window example requires the `jsx-compiler` feature");
 }

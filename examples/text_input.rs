@@ -13,6 +13,8 @@ use solite::{
     gpu::{BlitContext, BlitDraw, present_to_surface},
     winit::key_to_string,
 };
+#[cfg(feature = "jsx-compiler")]
+use solite::compile_component_source;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, KeyEvent, MouseButton as WinitMouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
@@ -123,6 +125,7 @@ impl ApplicationHandler for App {
 
         let (instance_width, instance_height) = (320, 80);
 
+        let component = compile_text_input_component_source(TEXT_INPUT_COMPONENT);
         let (mut instance, _events) = Instance::new(
             InstanceConfig {
                 width: instance_width,
@@ -137,7 +140,7 @@ impl ApplicationHandler for App {
                     .as_ref()
                     .map(|_| json!({ "value": "hello world" })),
             },
-            TEXT_INPUT_COMPONENT,
+            &component,
         )
         .expect("create instance");
         instance.set_shell_provider(Arc::new(SystemClipboard));
@@ -511,4 +514,15 @@ fn main() {
         capture_done: false,
     };
     event_loop.run_app(&mut app).expect("run");
+}
+
+#[cfg(feature = "jsx-compiler")]
+fn compile_text_input_component_source(component_source: &str) -> String {
+    compile_component_source(std::path::Path::new("text_input.jsx"), component_source)
+        .expect("JSX compile failed")
+}
+
+#[cfg(not(feature = "jsx-compiler"))]
+fn compile_text_input_component_source(_component_source: &str) -> String {
+    panic!("text_input example requires the `jsx-compiler` feature");
 }

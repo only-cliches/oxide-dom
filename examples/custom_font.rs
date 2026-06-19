@@ -18,6 +18,8 @@ use solite::{
     capture::capture_texture_to_png,
     gpu::{BlitContext, BlitDraw, present_to_surface},
 };
+#[cfg(feature = "jsx-compiler")]
+use solite::compile_component_source;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
@@ -73,6 +75,7 @@ impl ApplicationHandler for AppState {
         let window = Arc::new(event_loop.create_window(attrs).expect("window"));
         let gpu = pollster::block_on(init_gpu(window.clone()));
 
+        let component = compile_custom_font_component_source(COMPONENT);
         let (mut instance, _events) = Instance::new(
             InstanceConfig {
                 width: 480,
@@ -84,7 +87,7 @@ impl ApplicationHandler for AppState {
                 base_url: None,
                 initial_state: None,
             },
-            COMPONENT,
+            &component,
         )
         .expect("create instance");
 
@@ -237,6 +240,17 @@ async fn init_gpu(window: Arc<Window>) -> Gpu {
         config,
         blit,
     }
+}
+
+#[cfg(feature = "jsx-compiler")]
+fn compile_custom_font_component_source(component_source: &str) -> String {
+    compile_component_source(std::path::Path::new("custom_font.jsx"), component_source)
+        .expect("JSX compile failed")
+}
+
+#[cfg(not(feature = "jsx-compiler"))]
+fn compile_custom_font_component_source(_component_source: &str) -> String {
+    panic!("custom_font example requires the `jsx-compiler` feature");
 }
 
 fn main() {

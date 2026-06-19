@@ -93,6 +93,7 @@ impl ImgWatcher {
     /// directly.
     pub(crate) fn ingest_fetch_events(&mut self, events: Vec<FetchEvent>) {
         for ev in events {
+            let _maybe_error = ev.error.as_ref();
             if !ev.ok {
                 self.failed_urls.insert(ev.resolved_url);
             }
