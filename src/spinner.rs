@@ -51,13 +51,16 @@ pub(crate) fn collect_number_spinners(
         if w <= SPINNER_WIDTH || h < 4.0 {
             continue;
         }
-        let bx = abs.x + w - SPINNER_WIDTH;
-        let by = abs.y;
+        // Snap every coordinate to an integer pixel boundary so Vello renders
+        // crisp edges instead of anti-aliasing across pixel pairs.
+        let bx = (abs.x + w - SPINNER_WIDTH).round();
+        let by = abs.y.round();
         let half_h = (h / 2.0).floor();
+        let bw = SPINNER_WIDTH; // already an integer constant
         out.push(NumberSpinner {
             node_id,
-            up_button: (bx, by, SPINNER_WIDTH, half_h),
-            down_button: (bx, by + half_h, SPINNER_WIDTH, h - half_h),
+            up_button: (bx, by, bw, half_h),
+            down_button: (bx, by + half_h, bw, h - half_h),
         });
     }
     out
@@ -96,31 +99,29 @@ pub(crate) fn paint_number_spinners<S: PaintScene>(
         let bh_down = spinner.down_button.3;
         let full_h = bh_up + bh_down;
 
-        // Spinner column background.
-        let bg_rect = Rect::new(
-            bx as f64,
-            by as f64,
-            (bx + bw) as f64,
-            (by + full_h) as f64,
+        // Round to integers once; all derived positions stay on the grid.
+        let (bx, by, bw, full_h) = (
+            bx.round() as f64,
+            by.round() as f64,
+            bw.round() as f64,
+            full_h.round() as f64,
         );
+        let bh_up = bh_up.round() as f64;
+
+        // Spinner column background.
+        let bg_rect = Rect::new(bx, by, bx + bw, by + full_h);
         scene.fill(Fill::NonZero, Affine::scale(scale), bg, None, &bg_rect);
 
         // 1 px divider between the two halves.
         let mid_y = by + bh_up;
-        let div_rect = Rect::new(
-            bx as f64,
-            mid_y as f64,
-            (bx + bw) as f64,
-            (mid_y + 1.0) as f64,
-        );
+        let div_rect = Rect::new(bx, mid_y, bx + bw, mid_y + 1.0);
         scene.fill(Fill::NonZero, Affine::scale(scale), divider, None, &div_rect);
 
-        // Up arrow ▲.
+        // Up arrow ▲ — center snapped to nearest 0.5px for odd-sized buttons.
         {
-            let (ux, uy, uw, uh) = spinner.up_button;
-            let cx = (ux + uw / 2.0) as f64;
-            let cy = (uy + uh / 2.0) as f64;
-            let half = (uw.min(uh) * 0.28).clamp(2.5, 5.0) as f64;
+            let cx = (bx + bw / 2.0).round();
+            let cy = (by + bh_up / 2.0).round();
+            let half = (bw.min(bh_up) * 0.28).clamp(2.5, 5.0);
             let mut path = BezPath::new();
             path.move_to((cx, cy - half));
             path.line_to((cx - half * 1.3, cy + half * 0.7));
@@ -131,10 +132,10 @@ pub(crate) fn paint_number_spinners<S: PaintScene>(
 
         // Down arrow ▼.
         {
-            let (dx, dy, dw, dh) = spinner.down_button;
-            let cx = (dx + dw / 2.0) as f64;
-            let cy = (dy + dh / 2.0) as f64;
-            let half = (dw.min(dh) * 0.28).clamp(2.5, 5.0) as f64;
+            let bh_down = bh_down.round() as f64;
+            let cx = (bx + bw / 2.0).round();
+            let cy = (mid_y + bh_down / 2.0).round();
+            let half = (bw.min(bh_down) * 0.28).clamp(2.5, 5.0);
             let mut path = BezPath::new();
             path.move_to((cx, cy + half));
             path.line_to((cx - half * 1.3, cy - half * 0.7));
