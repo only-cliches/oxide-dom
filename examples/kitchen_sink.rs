@@ -175,6 +175,7 @@ impl App {
         } else {
             None
         };
+        let scale_factor = self.scale_factor_safe();
         let Some(project) = self.project.as_mut() else {
             return false;
         };
@@ -214,7 +215,7 @@ impl App {
                 &layouts,
                 TARGET_LABELS.as_slice(),
                 height,
-                self.scale_factor_safe(),
+                scale_factor,
                 &gpu.device,
                 &gpu.queue,
                 &project.birds_bytes,
