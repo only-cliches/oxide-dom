@@ -1,6 +1,3 @@
-// M1 example: 200×200 hello-world via Solid + Blitz.
-// No JSX — the component uses bridge globals directly.
-
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -17,9 +14,7 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::window::{Window, WindowId};
 
-// Styling lives in CSS. The component just attaches a class name; the rule
-// matches and Blitz computes the look. Click anywhere in the window to see
-// the `:active` pseudo-class swap the background.
+// Simple M1-style example: 200×200 Solid + Blitz rendering into a winit window.
 const HELLO_COMPONENT: &str = r#"
 import { render } from "solite-runtime";
 
@@ -63,10 +58,9 @@ struct Gpu {
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let attrs = Window::default_attributes()
-            .with_title("solite")
+            .with_title("solite: winit window")
             .with_inner_size(winit::dpi::LogicalSize::new(200u32, 200u32));
         let window = Arc::new(event_loop.create_window(attrs).expect("window"));
-
         let gpu = pollster::block_on(init_gpu(window.clone()));
 
         let (instance, _events) = Instance::new(
@@ -87,7 +81,6 @@ impl ApplicationHandler for App {
         self.window = Some(window);
         self.gpu = Some(gpu);
         self.instance = Some(instance);
-
         if let Some(window) = &self.window {
             window.request_redraw();
         }
@@ -97,15 +90,11 @@ impl ApplicationHandler for App {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::RedrawRequested => {
-                let capture_path = self.capture_path.take();
                 let (Some(instance), Some(gpu)) = (self.instance.as_mut(), self.gpu.as_ref())
                 else {
-                    if let Some(path) = capture_path {
-                        self.capture_path = Some(path);
-                    }
                     return;
                 };
-
+                let capture_path = self.capture_path.take();
                 let tick = instance.tick();
                 if tick.needs_paint {
                     let view = instance.render().clone();
@@ -126,6 +115,7 @@ impl ApplicationHandler for App {
                             }
                         }
                     }
+
                     let need_redraw = present_to_surface(
                         &gpu.device,
                         &gpu.queue,
@@ -177,7 +167,6 @@ async fn init_gpu(window: Arc<Window>) -> Gpu {
         ..wgpu::InstanceDescriptor::new_without_display_handle()
     });
     let surface = instance.create_surface(window.clone()).expect("surface");
-
     let adapter = instance
         .request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::None,
@@ -189,7 +178,7 @@ async fn init_gpu(window: Arc<Window>) -> Gpu {
 
     let (device, queue) = adapter
         .request_device(&wgpu::DeviceDescriptor {
-            label: Some("solite-device"),
+            label: Some("solite-winit-device"),
             required_features: wgpu::Features::empty(),
             required_limits: wgpu::Limits::default(),
             experimental_features: wgpu::ExperimentalFeatures::disabled(),
@@ -214,7 +203,6 @@ async fn init_gpu(window: Arc<Window>) -> Gpu {
         .find(|mode| *mode == wgpu::CompositeAlphaMode::Opaque)
         .or_else(|| caps.alpha_modes.first().copied())
         .unwrap_or(wgpu::CompositeAlphaMode::Opaque);
-
     let config = wgpu::SurfaceConfiguration {
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
         format,

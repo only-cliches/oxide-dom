@@ -163,28 +163,23 @@ impl ApplicationHandler for TwoApp {
                 } else {
                     1
                 };
+                let view_a = a.render().clone();
+                let view_b = b.render().clone();
 
-                if tick_a.needs_paint {
-                    let view_a = a.render().clone();
-                    draws.push(BlitDraw {
-                        view: view_a,
-                        x: 0,
-                        y: 0,
-                        width: half_width.max(1),
-                        height: viewport_height,
-                    });
-                }
-
-                if tick_b.needs_paint {
-                    let view_b = b.render().clone();
-                    draws.push(BlitDraw {
-                        view: view_b,
-                        x: half_width,
-                        y: 0,
-                        width: window_width.saturating_sub(half_width).max(1),
-                        height: viewport_height,
-                    });
-                }
+                draws.push(BlitDraw {
+                    view: view_a,
+                    x: 0,
+                    y: 0,
+                    width: half_width.max(1),
+                    height: viewport_height,
+                });
+                draws.push(BlitDraw {
+                    view: view_b,
+                    x: half_width,
+                    y: 0,
+                    width: window_width.saturating_sub(half_width).max(1),
+                    height: viewport_height,
+                });
 
                 if let Some(path) = self.capture_path.take().filter(|_| !self.capture_done) {
                     if let Some(gpu) = &self.gpu {
@@ -219,19 +214,17 @@ impl ApplicationHandler for TwoApp {
                 }
 
                 if let Some(gpu) = &self.gpu {
-                    if !draws.is_empty() {
-                        let need_redraw = present_to_surface(
-                            &gpu.device,
-                            &gpu.queue,
-                            &gpu.surface,
-                            &gpu.config,
-                            &gpu.blit,
-                            &draws,
-                        );
-                        if need_redraw {
-                            if let Some(window) = &self.window {
-                                window.request_redraw();
-                            }
+                    let need_redraw = present_to_surface(
+                        &gpu.device,
+                        &gpu.queue,
+                        &gpu.surface,
+                        &gpu.config,
+                        &gpu.blit,
+                        &draws,
+                    );
+                    if need_redraw {
+                        if let Some(window) = &self.window {
+                            window.request_redraw();
                         }
                     }
                 }
