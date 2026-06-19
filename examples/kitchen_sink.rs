@@ -14,384 +14,38 @@ mod capture;
 use blit::{BlitContext, BlitDraw};
 use blitz_traits::shell::{ClipboardError, ShellProvider};
 #[cfg(feature = "jsx-compiler")]
-use oxide_dom::compile_component_file;
-use oxide_dom::{
-    Event, FileWatch, Instance, InstanceConfig, KeyboardEvent, MouseButton, MouseEvent, Scene,
+use solite::compile_component_file;
+use solite::winit::{WinitBridge, WinitPollScheduler};
+use solite::{
+    Event, FileWatch, Instance, InstanceConfig, Scene, SourceChangeSummary, StylesheetId,
     SurfaceRect, TickResult,
 };
 use winit::application::ApplicationHandler;
-use winit::event::KeyEvent;
-use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::keyboard::{Key, ModifiersState, NamedKey, PhysicalKey};
+use winit::dpi::PhysicalPosition;
+use winit::event::WindowEvent;
+use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::window::{Window, WindowId};
 
-const PROJECT_NAME: &str = "oxide-dom-kitchen-sink";
+const PROJECT_NAME: &str = "solite-kitchen-sink";
 const TARGET_LABELS: [&str; 3] = ["Left Target", "Center Target", "Right Target"];
-// Kitchen-sink component. Layout, colours, and hover behaviour live in CSS —
-// JS is reserved for genuine application state (input values, scrollTop,
-// and row count). `:hover` and `:focus` are pure CSS pseudo-classes; no
-// `onMouseEnter`/`onMouseLeave` handlers are needed for styling.
-const APP_JSX_SOURCE: &str = r#"
-import { render } from "oxide-runtime";
-
-function App() {
-  const targetLabel = globalThis.state.targetLabel || "Pane";
-  const textValue = String(globalThis.state.text || "");
-  const numberValue = String(globalThis.state.number || "");
-  const rangeValue = String(globalThis.state.range || 50);
-  const checkboxValue = Boolean(globalThis.state.checkboxChecked);
-  const radioAValue = Boolean(globalThis.state.radioA);
-
-  const renderRows = () => {
-    const nodes = [];
-    const count = Math.max(1, Number(globalThis.state.rows || 24));
-    for (let i = 0; i < count; i++) {
-      const stripeClass = i % 2 === 0 ? "row row-even" : "row row-odd";
-      nodes.push(
-        <div class={stripeClass}>
-          {"Row " + (i + 1) + " - hover and scroll me"}
-        </div>,
-      );
-    }
-    return nodes;
-  };
-
-  return (
-    <div class="panel">
-      <div class="panel-title">{targetLabel}: Kitchen Sink</div>
-
-      <div class="toolbar">
-        <button
-          class="btn btn-add"
-          onClick={() => {
-            const next = Math.max(1, Number(globalThis.state.rows || 24)) + 1;
-            globalThis.state.rows = next;
-            sendEvent(
-              "action",
-              JSON.stringify({ type: "rows", target: targetLabel, count: next }),
-            );
-          }}
-        >
-          + Add Row
-        </button>
-
-        <button
-          class="btn btn-clear"
-          onClick={() => {
-            globalThis.state.rows = 20;
-            globalThis.state.text = "";
-            globalThis.state.number = "";
-            globalThis.state.range = 50;
-            globalThis.state.checkboxChecked = false;
-            globalThis.state.radioA = false;
-            globalThis.state.radioB = false;
-            globalThis.state.password = "";
-            globalThis.state.selectValue = "";
-            sendEvent(
-              "action",
-              JSON.stringify({ type: "clear", target: targetLabel }),
-            );
-          }}
-        >
-          Clear
-        </button>
-      </div>
-
-      <input
-        class="field field-text"
-        type="text"
-        value={textValue}
-        placeholder="Type here..."
-        onInput={(event) => {
-          globalThis.state.text = event.value;
-        }}
-      />
-
-      <input
-        class="field field-number"
-        type="number"
-        value={numberValue}
-        placeholder="Numeric value"
-        min="-100"
-        max="100"
-        step="0.5"
-        onInput={(event) => {
-          globalThis.state.number = event.value;
-        }}
-      />
-
-      <input
-        class="field field-range"
-        type="range"
-        min="0"
-        max="100"
-        step="5"
-        value={rangeValue}
-        onInput={(event) => {
-          globalThis.state.range = event.value;
-        }}
-      />
-
-      <div class="inline-fields">
-        <input
-          class="field field-checkbox"
-          type="checkbox"
-          checked={checkboxValue}
-          onInput={(event) => {
-            globalThis.state.checkboxChecked = event.checked;
-          }}
-        />
-        <input
-          class="field field-radio"
-          type="radio"
-          name="sink-mode"
-          onInput={(event) => {
-            globalThis.state.radioA = event.checked;
-            if (event.checked) {
-              globalThis.state.radioB = false;
-            }
-          }}
-        />
-        <input
-          class="field field-radio"
-          type="radio"
-          name="sink-mode"
-          onInput={(event) => {
-            globalThis.state.radioB = event.checked;
-            if (event.checked) {
-              globalThis.state.radioA = false;
-            }
-          }}
-        />
-      </div>
-
-      <input
-        class="field field-password"
-        type="password"
-        value={globalThis.state.password || ""}
-        placeholder="secret..."
-        onInput={(event) => {
-          globalThis.state.password = event.value;
-        }}
-      />
-
-      <select
-        class="field field-select"
-        value={globalThis.state.selectValue ?? ""}
-        onChange={(event) => {
-          globalThis.state.selectValue = event.value;
-          sendEvent(
-            "select",
-            JSON.stringify({ target: targetLabel, value: event.value }),
-          );
-        }}
-      >
-        <option value="" disabled selected hidden>Choose..</option>
-        <option value="option1">First Option</option>
-        <option value="option2">Second Option</option>
-        <option value="option3">Third Option</option>
-        <option value="option4" disabled>Disabled Option</option>
-        <option value="option5">Last Option</option>
-      </select>
-
-      <div
-        class="rows"
-        onWheel={(event) => {
-          globalThis.state.wheelCount = Number(globalThis.state.wheelCount || 0) + 1;
-          sendEvent(
-            "wheel",
-            JSON.stringify({ target: targetLabel, deltaY: event.deltaY }),
-          );
-        }}
-        onScroll={(event) => {
-          globalThis.state.scrollTop = event.scrollTop;
-        }}
-      >
-        {renderRows}
-      </div>
-
-      <div class="status">
-        {() =>
-          `rows=${Math.max(1, Number(globalThis.state.rows || 24))} wheel=${globalThis.state.wheelCount || 0} scrollTop=${globalThis.state.scrollTop || 0} text="${textValue}" number="${numberValue}" range=${rangeValue} checkbox=${checkboxValue ? "on" : "off"} radioA=${radioAValue ? "on" : "off"} radioB=${globalThis.state.radioB ? "on" : "off"} password=${globalThis.state.password || ""} select=${globalThis.state.selectValue ?? ""}`
-        }
-      </div>
-    </div>
-  );
-}
-
-render(() => App(), __OX_ROOT__);
-"#;
-
-// CSS shared by every kitchen-sink instance. All hover/focus visual logic
-// lives here — JS only sets a class name. Note: `:nth-child` isn't fully
-// supported by Blitz, so row stripes use explicit `row-even`/`row-odd` classes
-// assigned at render time.
-const APP_CSS: &str = r#"
-.panel {
-    display: block;
-    width: 360px;
-    padding: 10px;
-    background: #182238;
-    color: #f0f4ff;
-    border: 1px solid #3a4f74;
-}
-.panel-title {
-    margin-bottom: 10px;
-    font: 700 16px/1.2 system-ui, sans-serif;
-}
-.toolbar {
-    margin-bottom: 10px;
-}
-
-/* Buttons — :hover swaps the background. No JS handlers required.
-   NOTE: `transition:` would register an animation set entry per node. The
-   current Blitz snapshot doesn't clear that entry when the node is removed
-   (see process_removed_subtree in blitz-dom/src/mutator.rs), so dynamic
-   subtrees that use transitions will panic in resolve_stylist on the next
-   restyle after a removal. Drop `transition:` until that's fixed upstream. */
-.btn {
-    display: inline-block;
-    padding: 8px 10px;
-    border-radius: 7px;
-    cursor: pointer;
-    font-size: 13px;
-    color: #f3f7ff;
-}
-.btn-add {
-    margin-right: 8px;
-    border: 1px solid #7fb5ff;
-    background: #1f3b5f;
-}
-.btn-add:hover  { background: #5b8cfa; color: #ffffff; }
-.btn-add:active { background: #406fc9; }
-
-.btn-clear {
-    border: 1px solid #c28aff;
-    background: #3c225f;
-}
-.btn-clear:hover  { background: #7e45d8; color: #ffffff; }
-.btn-clear:active { background: #5d2fa3; }
-
-/* Text field — :focus drives the outline. */
-.field {
-    display: block;
-    width: 336px;
-    min-height: 1em;
-    padding: 4px;
-    margin-bottom: 10px;
-    font-size: 17px;
-    font-family: monospace;
-    color: #ffffff;
-    background: #0f1723;
-    border: 1px solid #4f6282;
-    outline: 1px solid transparent;
-}
-.field:focus { outline: 2px solid #80b0ff; }
-
-.inline-fields {
-    display: flex;
-    gap: 10px;
-    margin-bottom: 10px;
-    align-items: center;
-}
-
-/* text / number / password all share the same single-line appearance */
-.field-text,
-.field-number,
-.field-password {
-    width: 336px;
-}
-
-/* Select dropdown styling */
-select.field-select {
-    width: 336px;
-    cursor: pointer;
-}
-
-/* Range slider: strip away the box — the renderer paints its own
-   track + thumb using the CSS `color` as the accent. */
-.field-range {
-    width: 336px;
-    height: 28px;
-    min-height: 28px;
-    padding: 0 4px;
-    margin-bottom: 10px;
-    background: transparent;
-    border: none;
-    outline: none;
-    color: #5b8cfa;
-    cursor: pointer;
-}
-
-/* Checkbox and radio: fixed square, accent colour drives the painted widget.
-   box-sizing keeps the rendered border-box at the declared size — without it
-   `padding` adds 6px to each axis and the radios become 28x28 rounded
-   rectangles instead of 22x22 squares. */
-input.field-checkbox,
-input.field-radio {
-    box-sizing: border-box;
-    width: 22px;
-    height: 22px;
-    min-height: 22px;
-    min-width: 22px;
-    padding: 3px;
-    margin: 0;
-    color: #5b8cfa;
-    cursor: pointer;
-    flex: 0 0 auto;
-}
-/* UA stylesheet sets a fixed 14px border-radius for radios, which is enough
-   for the 14px UA size but reads as a pill once we resize the box. Half the
-   box (11px) collapses the corners into a circle. */
-input.field-checkbox {
-    border-radius: 0;
-}
-input.field-radio {
-    border-radius: 11px;
-}
-
-/* Scrollable row list — alternating stripes + per-row :hover. */
-.rows {
-    display: block;
-    width: 352px;
-    height: 190px;
-    overflow: auto;
-    border: 1px solid #4f6282;
-    background: #0f1420;
-}
-.row {
-    display: block;
-    padding: 7px 10px;
-    font: 12px/1.35 monospace;
-    color: #cfdaef;
-    border-bottom: 1px solid #25314a;
-    outline: 1px solid transparent;
-}
-.row-even { background: #141b2b; }
-.row-odd  { background: #101725; }
-.row:hover {
-    background: #224e6f;
-    color: #ffffff;
-    outline: 1px solid #7dd3fc;
-}
-
-.status {
-    margin-top: 8px;
-    font-size: 11px;
-    font-family: monospace;
-    color: #b7c3e0;
-}
-"#;
+// Kitchen-sink assets now live in a source directory so this example is
+// editable as normal TSX/CSS without embedding large inline strings.
+const KITCHEN_SINK_DIR: &str = "examples/kitchen_sink";
+const KITCHEN_SINK_SOURCE: &str = "main.tsx";
+const KITCHEN_SINK_STYLE: &str = "styles.css";
 
 struct DemoProject {
+    stylesheet_path: PathBuf,
+    stylesheet: String,
     source_dir: PathBuf,
+    source_file: PathBuf,
     dist_file: PathBuf,
 }
 
 struct RenderTargetData {
     label: String,
     rx: tokio::sync::mpsc::UnboundedReceiver<Event>,
+    stylesheet_id: Option<StylesheetId>,
 }
 
 struct App {
@@ -399,9 +53,9 @@ struct App {
     gpu: Option<Gpu>,
     project: Option<DemoProject>,
     watch: Option<FileWatch>,
+    watch_poller: WinitPollScheduler,
     scene: Scene<RenderTargetData>,
-    last_mouse: (f32, f32),
-    modifiers: ModifiersState,
+    bridge: WinitBridge,
     capture_path: Option<PathBuf>,
     capture_done: bool,
 }
@@ -449,9 +103,10 @@ impl App {
         (logical_width, logical_height)
     }
 
-    fn to_logical_pos(&self, x: f64, y: f64) -> (f32, f32) {
-        let scale = self.scale_factor_safe();
-        ((x / scale) as f32, (y / scale) as f32)
+    fn window_logical_size(&self) -> (u32, u32) {
+        self.window.as_ref().map_or((640, 420), |window| {
+            self.to_logical_size(window.inner_size().width, window.inner_size().height)
+        })
     }
 
     fn target_layout(total_width: u32, target_count: usize) -> Vec<(u32, u32)> {
@@ -482,6 +137,7 @@ impl App {
         widths
     }
 
+    #[cfg(test)]
     fn is_relevant_source_change(path: &Path, source_dir: &Path) -> bool {
         if !path.starts_with(source_dir) {
             return false;
@@ -497,54 +153,96 @@ impl App {
             })
     }
 
-    fn maybe_rebuild(&mut self) {
-        let (Some(project), Some(watch), Some(gpu)) = (
-            self.project.as_ref(),
-            self.watch.as_mut(),
-            self.gpu.as_ref(),
-        ) else {
-            return;
+    fn maybe_rebuild(&mut self) -> bool {
+        let Some(watch) = self.watch.as_mut() else {
+            return false;
+        };
+        let Some(source_dir) = self.project.as_ref().map(|p| p.source_dir.clone()) else {
+            return false;
         };
 
-        let mut needs_rebuild = false;
-        while let Some(path) = watch.poll() {
-            if Self::is_relevant_source_change(&path, &project.source_dir) {
-                needs_rebuild = true;
-            }
+        let SourceChangeSummary {
+            bundle_rebuild,
+            css_reload,
+        } = watch.poll_source_changes(&source_dir);
+
+        if !bundle_rebuild && !css_reload {
+            return false;
         }
 
-        if !needs_rebuild {
-            return;
-        }
+        let window_size = if bundle_rebuild {
+            Some(self.window_logical_size())
+        } else {
+            None
+        };
+        let Some(project) = self.project.as_mut() else {
+            return false;
+        };
 
-        if let Err(err) = build_bundle(project) {
-            eprintln!("[{PROJECT_NAME}] rebuild failed: {err}");
-            return;
-        }
-
-        let (width, height) = self.window.as_ref().map_or((640, 420), |w| {
-            self.to_logical_size(w.inner_size().width, w.inner_size().height)
-        });
-        let layouts = Self::target_layout(width, TARGET_LABELS.len());
-
-        match mount_targets(
-            &project.dist_file,
-            &layouts,
-            TARGET_LABELS.as_slice(),
-            height,
-            &gpu.device,
-            &gpu.queue,
-        ) {
-            Ok(mut scene) => {
-                for surface in scene.surfaces_mut() {
-                    let _ = surface.instance.tick();
-                }
-                self.scene = scene;
+        let refreshed_stylesheet = match std::fs::read_to_string(&project.stylesheet_path) {
+            Ok(css) => {
+                project.stylesheet = css;
+                Some(project.stylesheet.clone())
             }
             Err(err) => {
-                eprintln!("[{PROJECT_NAME}] failed to remount targets: {err}");
+                eprintln!(
+                    "[{PROJECT_NAME}] failed to reload stylesheet: {}; using previous version",
+                    err
+                );
+                Some(project.stylesheet.clone())
             }
+        };
+
+        if bundle_rebuild {
+            let Some(gpu) = self.gpu.as_ref() else {
+                return false;
+            };
+
+            if let Err(err) = build_bundle(project) {
+                eprintln!("[{PROJECT_NAME}] rebuild failed: {err}");
+                return false;
+            }
+
+            let (width, height) = window_size.unwrap_or((640, 420));
+            let layouts = Self::target_layout(width, TARGET_LABELS.len());
+            let stylesheets = vec![refreshed_stylesheet.unwrap_or_default()];
+            let dist_file = project.dist_file.clone();
+
+            match mount_targets(
+                &dist_file,
+                &stylesheets,
+                &layouts,
+                TARGET_LABELS.as_slice(),
+                height,
+                &gpu.device,
+                &gpu.queue,
+            ) {
+                Ok(mut scene) => {
+                    for surface in scene.surfaces_mut() {
+                        let _ = surface.instance.tick();
+                    }
+                    self.scene = scene;
+                }
+                Err(err) => {
+                    eprintln!("[{PROJECT_NAME}] failed to remount targets: {err}");
+                }
+            }
+            return true;
         }
+
+        if css_reload {
+            let stylesheet = refreshed_stylesheet.unwrap_or_default();
+            for surface in self.scene.surfaces_mut() {
+                let stylesheet_id = surface
+                    .instance
+                    .upsert_stylesheet(surface.data.stylesheet_id, &stylesheet);
+                surface.data.stylesheet_id = Some(stylesheet_id);
+                let _ = surface.instance.tick();
+            }
+            return true;
+        }
+
+        false
     }
 
     fn drain_events(&mut self) {
@@ -586,8 +284,10 @@ impl ApplicationHandler for App {
 
         let (width, height) = self.to_logical_size(gpu.config.width, gpu.config.height);
         let layouts = Self::target_layout(width, TARGET_LABELS.len());
+        let stylesheets = vec![project.stylesheet.clone()];
         let mut scene = match mount_targets(
             &project.dist_file,
+            &stylesheets,
             &layouts,
             TARGET_LABELS.as_slice(),
             height,
@@ -616,6 +316,7 @@ impl ApplicationHandler for App {
         self.gpu = Some(gpu);
         self.project = Some(project);
         self.watch = Some(watch);
+        self.watch_poller.set_enabled(true);
         self.scene = scene;
 
         if let Some(window) = &self.window {
@@ -625,8 +326,6 @@ impl ApplicationHandler for App {
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
-
             WindowEvent::Resized(size) => {
                 let scale = self.scale_factor_safe();
                 let width = size.width.max(1);
@@ -655,86 +354,12 @@ impl ApplicationHandler for App {
                 }
             }
 
-            WindowEvent::CursorMoved { position, .. } => {
-                self.last_mouse = self.to_logical_pos(position.x, position.y);
-
-                let event = MouseEvent::Move {
-                    x: self.last_mouse.0,
-                    y: self.last_mouse.1,
-                };
-                let result = self
-                    .scene
-                    .dispatch_mouse(self.last_mouse.0, self.last_mouse.1, event);
-
-                if result.needs_paint {
-                    if let Some(window) = &self.window {
-                        window.request_redraw();
-                    }
-                }
-            }
-
-            WindowEvent::MouseInput { state, button, .. } => {
-                let (x, y) = self.last_mouse;
-
-                let browser_button = match button {
-                    winit::event::MouseButton::Left => Some(MouseButton::Left),
-                    winit::event::MouseButton::Right => Some(MouseButton::Right),
-                    winit::event::MouseButton::Middle => Some(MouseButton::Middle),
-                    _ => None,
-                };
-                let Some(button) = browser_button else {
-                    return;
-                };
-
-                let event = match state {
-                    ElementState::Pressed => MouseEvent::Down { x, y, button },
-                    ElementState::Released => MouseEvent::Up { x, y, button },
-                };
-
-                let result = self.scene.dispatch_mouse(x, y, event);
-                if result.needs_paint
-                    && let Some(window) = &self.window
-                {
-                    window.request_redraw();
-                }
-            }
-
-            WindowEvent::ModifiersChanged(modifiers) => {
-                self.modifiers = modifiers.state();
-            }
-
-            WindowEvent::MouseWheel { delta, .. } => {
-                let (x, y) = self.last_mouse;
-                let (delta_x, delta_y) = match delta {
-                    MouseScrollDelta::LineDelta(dx, dy) => (dx * 40.0, dy * 40.0),
-                    MouseScrollDelta::PixelDelta(position) => {
-                        (position.x as f32, position.y as f32)
-                    }
-                };
-
-                let result = self.scene.dispatch_mouse(
-                    x,
-                    y,
-                    MouseEvent::Wheel {
-                        x,
-                        y,
-                        delta_x,
-                        delta_y,
-                    },
-                );
-                if result.needs_paint
-                    && let Some(window) = &self.window
-                {
-                    window.request_redraw();
-                }
-            }
-
             WindowEvent::RedrawRequested => {
                 if self.gpu.is_none() {
                     return;
                 }
 
-                self.maybe_rebuild();
+                let _ = self.maybe_rebuild();
 
                 let capture_request = if self.capture_done {
                     None
@@ -849,89 +474,33 @@ impl ApplicationHandler for App {
                 }
             }
 
-            WindowEvent::KeyboardInput {
-                event:
-                    KeyEvent {
-                        state: ElementState::Pressed,
-                        logical_key,
-                        physical_key,
-                        text,
-                        repeat,
-                        ..
+            // Mouse / keyboard / modifier / wheel / close events are forwarded
+            // through the bridge. CursorMoved positions arrive in physical
+            // pixels; convert to logical so they line up with the surface
+            // rects (which are tracked in logical coordinates).
+            other => {
+                let scale = self.scale_factor_safe();
+                let translated = match other {
+                    WindowEvent::CursorMoved {
+                        device_id,
+                        position,
+                    } => WindowEvent::CursorMoved {
+                        device_id,
+                        position: PhysicalPosition::new(position.x / scale, position.y / scale),
                     },
-                ..
-            } => {
-                let key = key_to_string(&logical_key, text.as_deref());
-                let code = match physical_key {
-                    PhysicalKey::Code(code) => format!("{code:?}"),
-                    _ => String::new(),
+                    other => other,
                 };
-
-                let event = KeyboardEvent {
-                    key,
-                    code,
-                    key_code: 0,
-                    repeat,
-                    shift_key: self.modifiers.shift_key(),
-                    ctrl_key: self.modifiers.control_key(),
-                    alt_key: self.modifiers.alt_key(),
-                    meta_key: self.modifiers.super_key(),
-                };
-                let event_key = event.key.clone();
-                let result = self.scene.dispatch_key_down(event);
-                println!(
-                    "[{PROJECT_NAME}] keyboard down key={} repeat={repeat}",
-                    event_key
-                );
-                if (result.needs_paint || result.jobs_pending)
+                let r = self.bridge.handle(&mut self.scene, &translated);
+                if r.close_requested {
+                    event_loop.exit();
+                    return;
+                }
+                if (r.needs_redraw || r.jobs_pending)
                     && let Some(window) = &self.window
                 {
                     window.request_redraw();
                 }
             }
-
-            WindowEvent::KeyboardInput {
-                event:
-                    KeyEvent {
-                        state: ElementState::Released,
-                        logical_key,
-                        physical_key,
-                        text,
-                        repeat,
-                        ..
-                    },
-                ..
-            } => {
-                let key = key_to_string(&logical_key, text.as_deref());
-                let code = match physical_key {
-                    PhysicalKey::Code(code) => format!("{code:?}"),
-                    _ => String::new(),
-                };
-
-                let event = KeyboardEvent {
-                    key,
-                    code,
-                    key_code: 0,
-                    repeat,
-                    shift_key: self.modifiers.shift_key(),
-                    ctrl_key: self.modifiers.control_key(),
-                    alt_key: self.modifiers.alt_key(),
-                    meta_key: self.modifiers.super_key(),
-                };
-                let event_key = event.key.clone();
-                let result = self.scene.dispatch_key_up(event);
-                println!(
-                    "[{PROJECT_NAME}] keyboard up key={} repeat={repeat}",
-                    event_key
-                );
-                if (result.needs_paint || result.jobs_pending)
-                    && let Some(window) = &self.window
-                {
-                    window.request_redraw();
-                }
-            }
-
-            _ => {}
         }
     }
 
@@ -939,6 +508,13 @@ impl ApplicationHandler for App {
     /// Blink-enabled inputs need periodic wake-ups so the caret can repaint.
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         let mut next_blink: Option<std::time::Instant> = None;
+        if self.watch_poller.should_poll()
+            && self.maybe_rebuild()
+            && let Some(window) = &self.window
+        {
+            window.request_redraw();
+        }
+
         for surface in self.scene.surfaces() {
             if let Some(deadline) = surface.instance.next_blink_deadline() {
                 next_blink = match next_blink {
@@ -948,11 +524,7 @@ impl ApplicationHandler for App {
             }
         }
 
-        if let Some(deadline) = next_blink {
-            event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
-        } else {
-            event_loop.set_control_flow(ControlFlow::Wait);
-        }
+        self.watch_poller.set_next_wakeup(event_loop, next_blink);
     }
 
     /// When the timer fires (no actual window event), winit calls
@@ -985,43 +557,52 @@ fn present_to_surface(
     blit::present_to_surface(device, queue, surface, config, blit, draws)
 }
 
-fn key_to_string(logical_key: &Key, text: Option<&str>) -> String {
-    if let Some(text) = text.filter(|text| !text.is_empty()) {
-        if text != "\u{8}" {
-            return text.to_string();
-        }
-    }
-    if let Key::Named(named) = logical_key {
-        if let NamedKey::Space = named {
-            return " ".to_string();
-        }
-        return format!("{named:?}");
-    }
-
-    match logical_key {
-        Key::Character(text) => text.to_string(),
-        Key::Named(named) => format!("{named:?}"),
-        Key::Unidentified(_) => "Unidentified".to_string(),
-        Key::Dead(Some(c)) => c.to_string(),
-        Key::Dead(None) => String::new(),
-    }
-}
-
 fn create_demo_project() -> io::Result<DemoProject> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let source_dir = manifest_dir.join(KITCHEN_SINK_DIR);
+    if !source_dir.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("missing example source directory: {}", source_dir.display()),
+        ));
+    }
+
+    let source_file = source_dir.join(KITCHEN_SINK_SOURCE);
+    if !source_file.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!(
+                "missing kitchen sink source file: {}",
+                source_file.display()
+            ),
+        ));
+    }
+
+    let stylesheet_path = source_dir.join(KITCHEN_SINK_STYLE);
+    if !stylesheet_path.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!(
+                "missing kitchen sink stylesheet: {}",
+                stylesheet_path.display()
+            ),
+        ));
+    }
+    let stylesheet = std::fs::read_to_string(&stylesheet_path)?;
+
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock")
         .as_nanos();
 
     let root = std::env::temp_dir().join(format!("{PROJECT_NAME}-{nanos}"));
-    let source_dir = root.join("src");
-    create_dir_all(&source_dir)?;
     create_dir_all(root.join("dist"))?;
 
-    write(source_dir.join("App.jsx"), APP_JSX_SOURCE)?;
-
     Ok(DemoProject {
+        stylesheet,
+        stylesheet_path: stylesheet_path.clone(),
         source_dir,
+        source_file,
         dist_file: root.join("dist/App.js"),
     })
 }
@@ -1030,7 +611,7 @@ fn build_bundle(project: &DemoProject) -> io::Result<()> {
     #[cfg(feature = "jsx-compiler")]
     {
         create_dir_all(&project.dist_file.parent().expect("dist parent"))?;
-        let source_path = project.source_dir.join("App.jsx");
+        let source_path = &project.source_file;
         let compiled = compile_component_file(&source_path).map_err(io::Error::other)?;
         write(&project.dist_file, compiled)?;
         Ok(())
@@ -1046,6 +627,7 @@ fn build_bundle(project: &DemoProject) -> io::Result<()> {
 
 fn mount_targets(
     compiled_path: &Path,
+    stylesheets: &[String],
     layouts: &[(u32, u32)],
     labels: &[&'static str],
     height: u32,
@@ -1078,8 +660,8 @@ fn mount_targets(
             index = index,
         );
         let seeded_source = bundle_source.replace(
-            "render(() => App(), __OX_ROOT__);",
-            &format!("{seed}render(() => App(), __OX_ROOT__);"),
+            "render(() => App(), __SOL_ROOT__);",
+            &format!("{seed}render(() => App(), __SOL_ROOT__);"),
         );
 
         let (instance, rx) = Instance::new(
@@ -1088,11 +670,17 @@ fn mount_targets(
                 height,
                 device: Arc::clone(device),
                 queue: Arc::clone(queue),
-                stylesheets: vec![APP_CSS.to_string()],
-                document_scroll: false,
+                stylesheets: vec![],
+                document_scroll: true,
+                base_url: None,
             },
             &seeded_source,
-        );
+        )
+        .expect("create instance");
+        let mut instance = instance;
+        let stylesheet_id = stylesheets
+            .first()
+            .map(|stylesheet| instance.add_stylesheet(stylesheet));
         instance.set_shell_provider(Arc::new(SystemClipboard));
 
         scene.add_surface(
@@ -1101,6 +689,7 @@ fn mount_targets(
             RenderTargetData {
                 label: label.to_string(),
                 rx,
+                stylesheet_id,
             },
         );
     }
@@ -1126,7 +715,7 @@ async fn init_gpu(window: Arc<Window>) -> Gpu {
 
     let (device, queue) = adapter
         .request_device(&wgpu::DeviceDescriptor {
-            label: Some("oxide-dom-kitchen-device"),
+            label: Some("solite-kitchen-device"),
             required_features: wgpu::Features::empty(),
             required_limits: wgpu::Limits::default(),
             experimental_features: wgpu::ExperimentalFeatures::disabled(),
@@ -1182,9 +771,9 @@ fn main() {
         gpu: None,
         project: None,
         watch: None,
+        watch_poller: WinitPollScheduler::with_default_interval(),
         scene: Scene::new(),
-        last_mouse: (0.0, 0.0),
-        modifiers: ModifiersState::empty(),
+        bridge: WinitBridge::new(),
         capture_path: args::capture_path_from_cli(),
         capture_done: false,
     };
@@ -1199,7 +788,11 @@ mod tests {
     fn source_change_filter_matches_jsx() {
         let root = Path::new("/tmp/does-not-exist");
         assert!(App::is_relevant_source_change(
-            &root.join("project/src/App.jsx"),
+            &root.join("project/src/main.tsx"),
+            &root.join("project/src"),
+        ));
+        assert!(App::is_relevant_source_change(
+            &root.join("project/src/styles.css"),
             &root.join("project/src"),
         ));
         assert!(!App::is_relevant_source_change(

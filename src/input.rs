@@ -641,7 +641,7 @@ impl InputState {
     }
 
     pub fn move_left(&mut self) -> bool {
-        if self.readonly || self.disabled || !self.input_type.is_text_like() {
+        if self.disabled || !self.input_type.is_text_like() {
             return false;
         }
         if self.has_selection() {
@@ -654,7 +654,7 @@ impl InputState {
     }
 
     pub fn move_left_extending(&mut self, extend: bool) -> bool {
-        if self.readonly || self.disabled || !self.input_type.is_text_like() {
+        if self.disabled || !self.input_type.is_text_like() {
             return false;
         }
         if !extend && self.has_selection() {
@@ -673,7 +673,7 @@ impl InputState {
     }
 
     pub fn move_right(&mut self) -> bool {
-        if self.readonly || self.disabled || !self.input_type.is_text_like() {
+        if self.disabled || !self.input_type.is_text_like() {
             return false;
         }
         if self.has_selection() {
@@ -686,7 +686,7 @@ impl InputState {
     }
 
     pub fn move_right_extending(&mut self, extend: bool) -> bool {
-        if self.readonly || self.disabled || !self.input_type.is_text_like() {
+        if self.disabled || !self.input_type.is_text_like() {
             return false;
         }
         if !extend && self.has_selection() {
@@ -704,15 +704,153 @@ impl InputState {
         true
     }
 
-    pub fn move_home(&mut self) -> bool {
+    /// Move the caret left by one word, optionally extending the selection.
+    /// Browser-style: first skip non-word chars to the left, then skip word
+    /// chars, landing at the start of the previous word (or string start).
+    pub fn move_word_left_extending(&mut self, extend: bool) -> bool {
+        if self.disabled || !self.input_type.is_text_like() {
+            return false;
+        }
+        let chars: Vec<char> = self.value.chars().collect();
+        let mut c = self.caret_chars;
+        if c == 0 {
+            // Even at the left edge, collapsing an existing selection counts
+            // as movement so Shift-Ctrl-Left at start behaves consistently.
+            if !extend && self.has_selection() {
+                self.clear_selection();
+                self.touch_blink_on();
+                return true;
+            }
+            return false;
+        }
+        while c > 0 && !is_word_char(chars[c - 1]) {
+            c -= 1;
+        }
+        while c > 0 && is_word_char(chars[c - 1]) {
+            c -= 1;
+        }
+        if c == self.caret_chars && (!extend || !self.has_selection()) {
+            return false;
+        }
+        self.prepare_selection_extension(extend);
+        self.caret_chars = c;
+        if !extend {
+            self.clear_selection();
+        }
+        self.touch_blink_on();
+        true
+    }
+
+    /// Move the caret right by one word, optionally extending the selection.
+    /// Browser-style: skip non-word chars to the right, then skip word
+    /// chars, landing past the end of the next word (or string end).
+    pub fn move_word_right_extending(&mut self, extend: bool) -> bool {
+        if self.disabled || !self.input_type.is_text_like() {
+            return false;
+        }
+        let chars: Vec<char> = self.value.chars().collect();
+        let n = chars.len();
+        let mut c = self.caret_chars;
+        if c >= n {
+            if !extend && self.has_selection() {
+                self.clear_selection();
+                self.touch_blink_on();
+                return true;
+            }
+            return false;
+        }
+        while c < n && !is_word_char(chars[c]) {
+            c += 1;
+        }
+        while c < n && is_word_char(chars[c]) {
+            c += 1;
+        }
+        if c == self.caret_chars && (!extend || !self.has_selection()) {
+            return false;
+        }
+        self.prepare_selection_extension(extend);
+        self.caret_chars = c;
+        if !extend {
+            self.clear_selection();
+        }
+        self.touch_blink_on();
+        true
+    }
+
+    /// Ctrl+Backspace: delete the word to the left of the caret. If there's a
+    /// selection, delete it instead (matching browsers).
+    pub fn delete_word_left(&mut self) -> bool {
         if self.readonly || self.disabled || !self.input_type.is_text_like() {
+            return false;
+        }
+        if self.delete_selection_inner() {
+            self.touch_blink_on();
+            return true;
+        }
+        // Compute the target by re-using the word-left algorithm on a
+        // collapsed caret.
+        let chars: Vec<char> = self.value.chars().collect();
+        let mut c = self.caret_chars;
+        let start = c;
+        while c > 0 && !is_word_char(chars[c - 1]) {
+            c -= 1;
+        }
+        while c > 0 && is_word_char(chars[c - 1]) {
+            c -= 1;
+        }
+        if c == start {
+            return false;
+        }
+        let start_byte = self.byte_index_of(c);
+        let end_byte = self.byte_index_of(start);
+        self.value.replace_range(start_byte..end_byte, "");
+        self.caret_chars = c;
+        self.clear_selection();
+        self.touch_blink_on();
+        true
+    }
+
+    /// Ctrl+Delete: delete the word to the right of the caret. If there's a
+    /// selection, delete it instead (matching browsers).
+    pub fn delete_word_right(&mut self) -> bool {
+        if self.readonly || self.disabled || !self.input_type.is_text_like() {
+            return false;
+        }
+        if self.delete_selection_inner() {
+            self.touch_blink_on();
+            return true;
+        }
+        let chars: Vec<char> = self.value.chars().collect();
+        let n = chars.len();
+        let start = self.caret_chars;
+        let mut c = start;
+        while c < n && !is_word_char(chars[c]) {
+            c += 1;
+        }
+        while c < n && is_word_char(chars[c]) {
+            c += 1;
+        }
+        if c == start {
+            return false;
+        }
+        let start_byte = self.byte_index_of(start);
+        let end_byte = self.byte_index_of(c);
+        self.value.replace_range(start_byte..end_byte, "");
+        // Caret stays put — text to the right of it was removed.
+        self.clear_selection();
+        self.touch_blink_on();
+        true
+    }
+
+    pub fn move_home(&mut self) -> bool {
+        if self.disabled || !self.input_type.is_text_like() {
             return false;
         }
         self.move_home_extending(false)
     }
 
     pub fn move_home_extending(&mut self, extend: bool) -> bool {
-        if self.readonly || self.disabled || !self.input_type.is_text_like() {
+        if self.disabled || !self.input_type.is_text_like() {
             return false;
         }
         if self.caret_chars == 0 && (!extend || !self.has_selection()) {
@@ -728,14 +866,14 @@ impl InputState {
     }
 
     pub fn move_end(&mut self) -> bool {
-        if self.readonly || self.disabled || !self.input_type.is_text_like() {
+        if self.disabled || !self.input_type.is_text_like() {
             return false;
         }
         self.move_end_extending(false)
     }
 
     pub fn move_end_extending(&mut self, extend: bool) -> bool {
-        if self.readonly || self.disabled || !self.input_type.is_text_like() {
+        if self.disabled || !self.input_type.is_text_like() {
             return false;
         }
         let end = self.len_chars();
@@ -824,18 +962,17 @@ impl InputState {
         }
 
         let idx = char_idx.min(chars.len().saturating_sub(1));
-        let is_word = |ch: char| ch.is_alphanumeric() || ch == '_';
-        if !is_word(chars[idx]) {
+        if !is_word_char(chars[idx]) {
             return Some((idx, idx + 1));
         }
 
         let mut start = idx;
-        while start > 0 && is_word(chars[start - 1]) {
+        while start > 0 && is_word_char(chars[start - 1]) {
             start -= 1;
         }
 
         let mut end = idx + 1;
-        while end < chars.len() && is_word(chars[end]) {
+        while end < chars.len() && is_word_char(chars[end]) {
             end += 1;
         }
 
@@ -874,9 +1011,19 @@ impl InputState {
     /// frame: the value or placeholder. The caret is painted separately by
     /// the renderer so its position and blink do not depend on text layout.
     pub fn render(&self, _focused: bool) -> (String, bool) {
+        let masked = self.masked || self.input_type == InputType::Password;
         let display: String = match self.input_type {
             InputType::Password => self.value.chars().map(|_| '\u{2022}').collect(),
-            InputType::Text | InputType::Number | InputType::Range => self.value.clone(),
+            InputType::Text | InputType::Number => {
+                if masked {
+                    self.value.chars().map(|_| '\u{2022}').collect()
+                } else {
+                    self.value.clone()
+                }
+            }
+            // Keep numeric text for DOM/value-sync while still rendering via
+            // a custom painter to avoid visible range text.
+            InputType::Range => self.value.clone(),
             InputType::Checkbox => {
                 if self.checked {
                     "true".to_string()
@@ -950,6 +1097,13 @@ impl InputState {
     pub fn force_blink_for_test(&mut self, elapsed: std::time::Duration) {
         self.last_blink = std::time::Instant::now() - elapsed;
     }
+}
+
+/// Browser-style "word character": Unicode alphanumeric or underscore.
+/// Used by Ctrl+ArrowLeft/Right / Ctrl+Backspace word navigation as well
+/// as double-click word selection.
+fn is_word_char(ch: char) -> bool {
+    ch.is_alphanumeric() || ch == '_'
 }
 
 /// Map of node-id → InputState, shared between the bridge (where inputs are

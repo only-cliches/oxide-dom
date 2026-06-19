@@ -281,27 +281,27 @@ mod tests {
     use std::sync::Arc;
 
     const TWO_INPUT_COMPONENT: &str = r#"
-        import { render } from "oxide-runtime";
+        import { render } from "solite-runtime";
         function App() {
-          const root = __ox_createElement("div");
+          const root = __sol_createElement("div");
 
-          const first = __ox_createElement("input");
-          __ox_setProperty(first, "style", "display:block; width:90px; height:24px;");
-          __ox_setProperty(first, "onFocus", () => {
+          const first = __sol_createElement("input");
+          __sol_setProperty(first, "style", "display:block; width:90px; height:24px;");
+          __sol_setProperty(first, "onFocus", () => {
             globalThis.state.focused = "first";
           });
 
-          const second = __ox_createElement("input");
-          __ox_setProperty(second, "style", "display:block; width:90px; height:24px;");
-          __ox_setProperty(second, "onFocus", () => {
+          const second = __sol_createElement("input");
+          __sol_setProperty(second, "style", "display:block; width:90px; height:24px;");
+          __sol_setProperty(second, "onFocus", () => {
             globalThis.state.focused = "second";
           });
 
-          __ox_insertNode(root, first, null);
-          __ox_insertNode(root, second, null);
+          __sol_insertNode(root, first, null);
+          __sol_insertNode(root, second, null);
           return root;
         }
-        render(() => App(), __OX_ROOT__);
+        render(() => App(), __SOL_ROOT__);
     "#;
 
     async fn make_test_device() -> (Arc<wgpu::Device>, Arc<wgpu::Queue>) {
@@ -327,7 +327,7 @@ mod tests {
             .expect("no adapter available for test");
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
-                label: Some("oxide-scene-test"),
+                label: Some("solite-scene-test"),
                 required_features: wgpu::Features::empty(),
                 required_limits: wgpu::Limits::default(),
                 experimental_features: wgpu::ExperimentalFeatures::disabled(),
@@ -369,6 +369,7 @@ mod tests {
                 queue,
                 stylesheets: vec![],
                 document_scroll: false,
+                base_url: None,
             },
             TWO_INPUT_COMPONENT,
         );

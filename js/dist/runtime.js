@@ -1138,9 +1138,17 @@ function createStore(...[store, options]) {
 }
 
 // runtime.ts
-var wrap = (id) => ({ __oxId: id });
-var unwrap2 = (n) => typeof n === "number" ? n : n?.__oxId ?? 0;
-var unwrapOpt = (n) => n == null ? null : typeof n === "number" ? n : n.__oxId;
+var handleCache = /* @__PURE__ */ new Map();
+var wrap = (id) => {
+  let handle = handleCache.get(id);
+  if (!handle) {
+    handle = { __solId: id };
+    handleCache.set(id, handle);
+  }
+  return handle;
+};
+var unwrap2 = (n) => typeof n === "number" ? n : n?.__solId ?? 0;
+var unwrapOpt = (n) => n == null ? null : typeof n === "number" ? n : n.__solId;
 var toPathParts = (path) => path === "" ? [] : path.split(".").map((part) => /^\d+$/.test(part) ? Number(part) : part);
 var normalizeStateValue = (value) => value && typeof value === "object" ? value : {};
 var stateStore = createStore(normalizeStateValue({}));
@@ -1206,7 +1214,7 @@ var makeStateProxy = (path) => {
         }
         const nextParts = [...path, part];
         setStateForParts([...nextParts], value);
-        __ox_state_set(nextParts.join("."), JSON.stringify(value));
+        __sol_state_set(nextParts.join("."), JSON.stringify(value));
         return true;
       },
       ownKeys: () => {
@@ -1243,30 +1251,39 @@ var makeStateProxy = (path) => {
   return proxy;
 };
 var stateProxyObj = makeStateProxy([]);
-var rawCreateElement = __ox_createElement;
-var rawCreateTextNode = __ox_createTextNode;
-var rawSetProperty = __ox_setProperty;
-var rawInsertNode = __ox_insertNode;
-var rawRemoveNode = __ox_removeNode;
-var rawSetText = __ox_setText;
-var rawGetFirstChild = __ox_getFirstChild;
-var rawGetNextSibling = __ox_getNextSibling;
-var rawGetParentNode = __ox_getParentNode;
-globalThis.__ox_createElement = (tag) => wrap(rawCreateElement(tag));
-globalThis.__ox_createTextNode = (text) => wrap(rawCreateTextNode(text));
-globalThis.__ox_setProperty = (node, key, value) => rawSetProperty(unwrap2(node), key, value);
-globalThis.__ox_insertNode = (parent, node, anchor) => rawInsertNode(unwrap2(parent), unwrap2(node), unwrapOpt(anchor));
-globalThis.__ox_removeNode = (parent, node) => rawRemoveNode(unwrap2(parent), unwrap2(node));
-globalThis.__ox_setText = (node, value) => rawSetText(unwrap2(node), value);
-globalThis.__ox_getFirstChild = (node) => rawGetFirstChild(unwrap2(node));
-globalThis.__ox_getNextSibling = (node) => rawGetNextSibling(unwrap2(node));
-globalThis.__ox_getParentNode = (node) => rawGetParentNode(unwrap2(node));
+var rawCreateElement = __sol_createElement;
+var rawCreateTextNode = __sol_createTextNode;
+var rawSetProperty = __sol_setProperty;
+var rawInsertNode = __sol_insertNode;
+var rawRemoveNode = __sol_removeNode;
+var rawSetText = __sol_setText;
+var rawIsTextNode = __sol_isTextNode;
+var rawGetFirstChild = __sol_getFirstChild;
+var rawGetNextSibling = __sol_getNextSibling;
+var rawGetParentNode = __sol_getParentNode;
+globalThis.__sol_createElement = (tag) => wrap(rawCreateElement(tag));
+globalThis.__sol_createTextNode = (text) => wrap(rawCreateTextNode(text));
+globalThis.__sol_setProperty = (node, key, value) => rawSetProperty(unwrap2(node), key, value);
+globalThis.__sol_insertNode = (parent, node, anchor) => rawInsertNode(unwrap2(parent), unwrap2(node), unwrapOpt(anchor));
+globalThis.__sol_removeNode = (parent, node) => rawRemoveNode(unwrap2(parent), unwrap2(node));
+globalThis.__sol_setText = (node, value) => rawSetText(unwrap2(node), value);
+globalThis.__sol_isTextNode = (node) => rawIsTextNode(unwrap2(node));
+globalThis.__sol_getFirstChild = (node) => rawGetFirstChild(unwrap2(node));
+globalThis.__sol_getNextSibling = (node) => rawGetNextSibling(unwrap2(node));
+globalThis.__sol_getParentNode = (node) => rawGetParentNode(unwrap2(node));
 var applyStatePatch = (path, value) => {
   const parts = toPathParts(path);
   if (parts.length === 0) {
-    const [nextState, nextSetter] = createStore(normalizeStateValue(value));
-    stateMap = nextState;
-    setStateForPath = nextSetter;
+    const next = normalizeStateValue(value);
+    const nextKeys = new Set(Object.keys(next));
+    for (const key of Object.keys(stateMap)) {
+      if (!nextKeys.has(key)) {
+        setStateForParts([key], void 0);
+      }
+    }
+    for (const [key, entryValue] of Object.entries(next)) {
+      setStateForParts([key], entryValue);
+    }
     proxyCache.clear();
     return;
   }
@@ -1289,8 +1306,8 @@ var runtimeState = {
     }
   }
 };
-globalThis.__ox_state = runtimeState;
-globalThis.__ox_apply_state_patch = (path, value_json) => {
+globalThis.__sol_state = runtimeState;
+globalThis.__sol_apply_state_patch = (path, value_json) => {
   let value = null;
   try {
     value = JSON.parse(value_json);
@@ -1299,66 +1316,116 @@ globalThis.__ox_apply_state_patch = (path, value_json) => {
   }
   applyStatePatch(path, value);
 };
-function __oxStyleToString(value) {
+var runtimeEventListeners = /* @__PURE__ */ new Map();
+var addRuntimeEventListener = (type, listener) => {
+  if (typeof type !== "string" || typeof listener !== "function") {
+    return;
+  }
+  let listeners = runtimeEventListeners.get(type);
+  if (!listeners) {
+    listeners = /* @__PURE__ */ new Set();
+    runtimeEventListeners.set(type, listeners);
+  }
+  listeners.add(listener);
+};
+var removeRuntimeEventListener = (type, listener) => {
+  runtimeEventListeners.get(type)?.delete(listener);
+};
+var dispatchRuntimeEvent = (type, payloadJson) => {
+  const listeners = runtimeEventListeners.get(type);
+  if (!listeners || listeners.size === 0) {
+    return 0;
+  }
+  let detail = null;
+  try {
+    detail = JSON.parse(payloadJson);
+  } catch (_err) {
+    detail = payloadJson;
+  }
+  let defaultPrevented = false;
+  const event = {
+    type,
+    detail,
+    payload: detail,
+    get defaultPrevented() {
+      return defaultPrevented;
+    },
+    preventDefault() {
+      defaultPrevented = true;
+    }
+  };
+  const snapshot = Array.from(listeners);
+  for (const listener of snapshot) {
+    try {
+      listener(event);
+    } catch (err) {
+      globalThis.__sol_last_runtime_event_error = err instanceof Error ? err.message : String(err);
+    }
+  }
+  return snapshot.length;
+};
+globalThis.__sol_addEventListener = addRuntimeEventListener;
+globalThis.__sol_removeEventListener = removeRuntimeEventListener;
+globalThis.__sol_dispatch_runtime_event = dispatchRuntimeEvent;
+if (typeof globalThis.addEventListener !== "function") {
+  globalThis.addEventListener = addRuntimeEventListener;
+}
+if (typeof globalThis.removeEventListener !== "function") {
+  globalThis.removeEventListener = removeRuntimeEventListener;
+}
+var hyphenateStyleName = (name) => name.replace(/[A-Z]/g, (match) => `-${match.toLowerCase()}`);
+var styleToString = (value) => {
   if (value == null || value === false) return "";
   if (typeof value === "string") return value;
   if (typeof value !== "object") return String(value);
-  return Object.entries(value)
-    .filter(([, v]) => v != null && v !== false)
-    .map(([k, v]) => `:`)
-    .join(";");
-}
-function __oxClassListToString(value) {
+  return Object.entries(value).filter(([, v]) => v != null && v !== false).map(([k, v]) => `${hyphenateStyleName(k)}: ${String(v)}`).join("; ");
+};
+var classListToString = (value) => {
   if (value == null || value === false) return "";
   if (typeof value === "string") return value;
   if (Array.isArray(value)) return value.filter(Boolean).join(" ");
   if (typeof value !== "object") return String(value);
-  return Object.entries(value)
-    .filter(([, v]) => !!v)
-    .map(([k]) => k)
-    .join(" ");
-}
-function __oxApplyRuntimeProperty(node, name, value, prev) {
+  return Object.entries(value).filter(([, v]) => !!v).map(([k]) => k).join(" ");
+};
+var applyRuntimeProperty = (node, name, value, _prev) => {
   const id = unwrap2(node);
-  const event = typeof name === "string" ? globalThis.__ox_extractEventName(name) : null;
+  const event = typeof name === "string" ? globalThis.__sol_extractEventName?.(name) : null;
   if (name === "ref") {
-    if (typeof value === "function") return untrack(() => value(node));
+    if (typeof value === "function") {
+      return untrack(() => value(node));
+    }
     return value;
   }
-  if (typeof value === "function" && event === null) value = value();
-  if (name === "style") value = __oxStyleToString(value);
-  else if (name === "classList") {
-    name = "class";
-    value = __oxClassListToString(value);
-  } else if (typeof name === "string" && name.startsWith("class:")) {
-    name = "class";
-    value = value ? name.slice(6) : "";
-  } else if (typeof name === "string" && name.startsWith("style:")) {
-    const styleName = name.slice(6);
-    name = "style";
-    value = value == null || value === false ? "" : `:`;
+  if (typeof value === "function" && event == null) {
+    value = value();
   }
-  __ox_setProperty(id, name, value);
+  if (name === "style") {
+    value = styleToString(value);
+  } else if (name === "classList") {
+    name = "class";
+    value = classListToString(value);
+  }
+  __sol_setProperty(id, name, value);
   return value;
-}
+};
 var renderer = createRenderer({
-  createElement: (tag) => globalThis.__ox_createElement(tag),
-  createTextNode: (text) => globalThis.__ox_createTextNode(text),
-  replaceText: (node, text) => __ox_setText(unwrap2(node), text),
-  setProperty: (node, name, value, prev) => __oxApplyRuntimeProperty(node, name, value, prev),
-  insertNode: (parent, node, anchor) => __ox_insertNode(unwrap2(parent), unwrap2(node), unwrapOpt(anchor)),
-  isTextNode: (_node) => false,
-  removeNode: (parent, node) => __ox_removeNode(unwrap2(parent), unwrap2(node)),
+  createElement: (tag) => globalThis.__sol_createElement(tag),
+  createTextNode: (text) => globalThis.__sol_createTextNode(text),
+  replaceText: (node, text) => __sol_setText(unwrap2(node), text),
+  setProperty: (node, name, value, prev) => applyRuntimeProperty(node, name, value, prev),
+  insertNode: (parent, node, anchor) => __sol_insertNode(unwrap2(parent), unwrap2(node), unwrapOpt(anchor)),
+  isTextNode: (node) => __sol_isTextNode(unwrap2(node)),
+  removeNode: (parent, node) => __sol_removeNode(unwrap2(parent), unwrap2(node)),
   getParentNode: (node) => {
-    const id = __ox_getParentNode(unwrap2(node));
+    const id = __sol_getParentNode(unwrap2(node));
     return id != null ? wrap(id) : null;
   },
   getFirstChild: (node) => {
-    const id = __ox_getFirstChild(unwrap2(node));
+    const id = __sol_getFirstChild(unwrap2(node));
     return id != null ? wrap(id) : null;
   },
   getNextSibling: (node) => {
-    const id = __ox_getNextSibling(unwrap2(node));
+    const id = __sol_getNextSibling(unwrap2(node));
     return id != null ? wrap(id) : null;
   }
 });
@@ -1378,9 +1445,9 @@ var jsxCreateElement = (tag, props, ...children) => {
       if (key === "children") continue;
       const value = props[key];
       if (typeof value === "function" && !/^on[A-Z]/.test(key)) {
-        createEffect(() => __ox_setProperty(id, key, value()));
+        createEffect(() => applyRuntimeProperty(id, key, value()));
       } else {
-        __ox_setProperty(id, key, value);
+        applyRuntimeProperty(id, key, value);
       }
     }
   }
@@ -1391,12 +1458,12 @@ var jsxCreateElement = (tag, props, ...children) => {
     createEffect(() => {
       const value = getter();
       if (prevWasSingleText && prevInsertedIds.length === 1 && isSimpleText(value)) {
-        globalThis.__ox_setText(prevInsertedIds[0], String(value));
+        globalThis.__sol_setText(prevInsertedIds[0], String(value));
         return;
       }
       for (const childId of prevInsertedIds) {
         try {
-          __ox_removeNode(id, childId);
+          __sol_removeNode(id, childId);
         } catch (_) {
         }
       }
@@ -1409,14 +1476,14 @@ var jsxCreateElement = (tag, props, ...children) => {
           return;
         }
         let childId;
-        if (typeof child === "object" && typeof child.__oxId === "number") {
-          childId = child.__oxId;
+        if (typeof child === "object" && typeof child.__solId === "number") {
+          childId = child.__solId;
         } else if (typeof child === "number" && Number.isInteger(child)) {
           childId = child;
         } else {
-          childId = globalThis.__ox_createTextNode(String(child));
+          childId = globalThis.__sol_createTextNode(String(child));
         }
-        __ox_insertNode(id, childId, null);
+        __sol_insertNode(id, childId, null);
         prevInsertedIds.push(childId);
       };
       insertOne(value);
@@ -1431,20 +1498,20 @@ var jsxCreateElement = (tag, props, ...children) => {
       for (const c of child) append(c);
       return;
     }
-    if (typeof child === "object" && typeof child.__oxId === "number") {
-      __ox_insertNode(id, child.__oxId, null);
+    if (typeof child === "object" && typeof child.__solId === "number") {
+      __sol_insertNode(id, child.__solId, null);
       return;
     }
     if (typeof child === "number" && Number.isInteger(child)) {
-      __ox_insertNode(id, child, null);
+      __sol_insertNode(id, child, null);
       return;
     }
     if (typeof child === "function") {
       appendReactive(child);
       return;
     }
-    const textId = globalThis.__ox_createTextNode(String(child));
-    __ox_insertNode(id, textId, null);
+    const textId = globalThis.__sol_createTextNode(String(child));
+    __sol_insertNode(id, textId, null);
   };
   for (const child of children) append(child);
   return node;
@@ -1460,16 +1527,15 @@ var spread = renderer.spread;
 var setProp = renderer.setProp;
 var mergeProps2 = renderer.mergeProps;
 var use = renderer.use;
-var memo = value => value;
-var For = props => {
-  const each = typeof props.each === "function" ? props.each() : props.each;
+var _For = (props) => {
+  const each = props.each;
   if (!each || !each.length) {
     return typeof props.fallback === "function" ? props.fallback() : props.fallback;
   }
   return each.map((item, index) => props.children(item, () => index));
 };
 export {
-  For,
+  _For as For,
   createComponent2 as createComponent,
   createEffect,
   createElement,
@@ -1481,8 +1547,10 @@ export {
   insertNode,
   memo2 as memo,
   mergeProps2 as mergeProps,
+  onCleanup,
   render,
   setProp,
   spread,
+  untrack,
   use
 };

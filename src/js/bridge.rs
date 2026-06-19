@@ -5,7 +5,9 @@ use std::rc::Rc;
 use blitz_dom::BaseDocument;
 use blitz_dom::{LocalName, QualName, ns};
 use rquickjs::{Ctx, Function, Persistent, Result as JsResult};
+use url::Url;
 
+use crate::img::ImgWatcherHandle;
 use crate::input::{InputRegistry, InputState};
 
 #[cfg(test)]
@@ -27,6 +29,14 @@ pub(crate) struct DomBridge {
     pub handlers: Rc<RefCell<HandlerMap>>,
     pub inputs: InputRegistry,
     pub selects: crate::select::SelectRegistry,
+    /// Shared `<img>` lifecycle tracker. Wrote by `__sol_setAttr` when a
+    /// `src` attribute is set on an `<img>`; read by `Instance::tick` to
+    /// dispatch `load` / `error` events.
+    pub img_watcher: ImgWatcherHandle,
+    /// Base URL used to resolve relative `<img src>` values. Mirrors what
+    /// `BaseDocument::resolve_url` does (`pub(crate)` in blitz, so we
+    /// duplicate here).
+    pub base_url: Rc<RefCell<Url>>,
 }
 
 fn html_qual(tag: &str) -> QualName {
@@ -242,25 +252,29 @@ impl DomBridge {
         handlers: Rc<RefCell<HandlerMap>>,
         inputs: InputRegistry,
         selects: crate::select::SelectRegistry,
+        img_watcher: ImgWatcherHandle,
+        base_url: Rc<RefCell<Url>>,
     ) -> Self {
         Self {
             doc,
             handlers,
             inputs,
             selects,
+            img_watcher,
+            base_url,
         }
     }
 
     /// Register all bridge globals on `ctx`.
     ///
     /// The design for property/event dispatch uses a thin JS wrapper
-    /// (`__ox_setProperty`) so that Rust only ever receives strongly-typed
+    /// (`__sol_setProperty`) so that Rust only ever receives strongly-typed
     /// arguments — avoiding the lifetime complications of `Value<'js>` inside
     /// a `Function::new` closure.
     pub fn install<'js>(&self, ctx: Ctx<'js>) -> JsResult<()> {
         let globals = ctx.globals();
 
-        // ── __ox_register_stylesheet — auto-applied CSS imports ───────────────
+        // ── __sol_register_stylesheet — auto-applied CSS imports ───────────────
         //
         // Invoked by the CSS module loader as a side effect of `import "./x.css"`
         // so the rules become active without the component needing to mount a
@@ -270,7 +284,7 @@ impl DomBridge {
         {
             let doc = Rc::clone(&self.doc);
             globals.set(
-                "__ox_register_stylesheet",
+                "__sol_register_stylesheet",
                 Function::new(ctx.clone(), move |css: String| -> JsResult<()> {
                     doc.borrow_mut().add_user_agent_stylesheet(&css);
                     Ok(())
@@ -294,7 +308,7 @@ impl DomBridge {
             let inputs = Rc::clone(&self.inputs);
             let selects = Rc::clone(&self.selects);
             globals.set(
-                "__ox_createElement",
+                "__sol_createElement",
                 Function::new(ctx.clone(), move |tag: String| -> JsResult<usize> {
                     let mut d = doc.borrow_mut();
                     let id = d.mutate().create_element(html_qual(&tag), vec![]);
@@ -320,14 +334,14 @@ impl DomBridge {
         {
             let doc = Rc::clone(&self.doc);
             globals.set(
-                "__ox_createTextNode",
+                "__sol_createTextNode",
                 Function::new(ctx.clone(), move |text: String| -> JsResult<usize> {
                     Ok(doc.borrow_mut().create_text_node(&text))
                 }),
             )?;
         }
 
-        // ── __ox_setAttr — string/boolean/number attributes ───────────────────
+        // ── __sol_setAttr — string/boolean/number attributes ───────────────────
         //
         // For input-managed attributes (`value`, `placeholder`, `type`,
         // `checked`, `name`, `min`, `max`, `step`, `readonly`, `disabled`),
@@ -342,14 +356,42 @@ impl DomBridge {
             let doc = Rc::clone(&self.doc);
             let inputs = Rc::clone(&self.inputs);
             let selects = Rc::clone(&self.selects);
+            let img_watcher = Rc::clone(&self.img_watcher);
+            let base_url = Rc::clone(&self.base_url);
             globals.set(
-                "__ox_setAttr",
+                "__sol_setAttr",
                 Function::new(
                     ctx.clone(),
                     move |node_id: usize, key: String, value: String| -> JsResult<()> {
                         doc.borrow_mut()
                             .mutate()
                             .set_attribute(node_id, attr_qual(&key), &value);
+
+                        // Track `<img src>` for `load`/`error` event dispatch.
+                        // The element-data check happens AFTER set_attribute so
+                        // the mutator has already kicked off the resource fetch
+                        // (`SpecialElementData::Image` will be set on the next
+                        // `handle_messages`).
+                        if key == "src" {
+                            let is_img = doc
+                                .borrow()
+                                .get_node(node_id)
+                                .and_then(|n| n.element_data())
+                                .is_some_and(|e| e.name.local.as_ref() == "img");
+                            if is_img {
+                                if value.is_empty() {
+                                    img_watcher.borrow_mut().clear(node_id);
+                                } else {
+                                    let resolved = base_url
+                                        .borrow()
+                                        .join(&value)
+                                        .map(|u| u.to_string())
+                                        .unwrap_or_else(|_| value.clone());
+                                    img_watcher.borrow_mut().register(node_id, resolved);
+                                }
+                            }
+                        }
+
                         match key.as_str() {
                             "value" => {
                                 let handled_input = inputs
@@ -493,11 +535,11 @@ impl DomBridge {
             )?;
         }
 
-        // ── __ox_getAttr — read an attribute value ────────────────────────────
+        // ── __sol_getAttr — read an attribute value ────────────────────────────
         {
             let doc = Rc::clone(&self.doc);
             globals.set(
-                "__ox_getAttr",
+                "__sol_getAttr",
                 Function::new(
                     ctx.clone(),
                     move |node_id: usize, key: String| -> JsResult<Option<String>> {
@@ -516,14 +558,14 @@ impl DomBridge {
             )?;
         }
 
-        // ── __ox_setHandler — event handler (receives Persistent<Function>) ───
+        // ── __sol_setHandler — event handler (receives Persistent<Function>) ───
         //
         // `Persistent<Function<'static>>` implements `FromJs<'js>` via rquickjs,
         // so the JS→Rust conversion and `Persistent::save` happen automatically.
         {
             let handlers = Rc::clone(&self.handlers);
             globals.set(
-                "__ox_setHandler",
+                "__sol_setHandler",
                 Function::new(
                     ctx.clone(),
                     move |node_id: usize,
@@ -537,7 +579,7 @@ impl DomBridge {
             )?;
         }
 
-        // ── __ox_setProperty — JS dispatcher ─────────────────────────────────
+        // ── __sol_setProperty — JS dispatcher ─────────────────────────────────
         //
         // Decides at runtime whether the value is a handler or a plain attr and
         // forwards to the appropriate Rust function above.
@@ -550,22 +592,22 @@ impl DomBridge {
         //     style attribute, leaving other declarations alone.
         ctx.eval::<(), _>(
             r#"
-            function __ox_tokenize(str) {
+            function __sol_tokenize(str) {
                 return str ? str.split(/\s+/).filter(Boolean) : [];
             }
-            globalThis.__ox_toggleClass = function(nodeId, token, active) {
-                var current = __ox_getAttr(nodeId, 'class') || '';
-                var tokens = __ox_tokenize(current);
+            globalThis.__sol_toggleClass = function(nodeId, token, active) {
+                var current = __sol_getAttr(nodeId, 'class') || '';
+                var tokens = __sol_tokenize(current);
                 var idx = tokens.indexOf(token);
                 if (active) {
                     if (idx < 0) tokens.push(token);
                 } else {
                     if (idx >= 0) tokens.splice(idx, 1);
                 }
-                __ox_setAttr(nodeId, 'class', tokens.join(' '));
+                __sol_setAttr(nodeId, 'class', tokens.join(' '));
             };
-            globalThis.__ox_setStyleDecl = function(nodeId, prop, value) {
-                var current = __ox_getAttr(nodeId, 'style') || '';
+            globalThis.__sol_setStyleDecl = function(nodeId, prop, value) {
+                var current = __sol_getAttr(nodeId, 'style') || '';
                 var decls = current.split(';').map(function(s){return s.trim();}).filter(Boolean);
                 var found = false;
                 var out = [];
@@ -585,41 +627,41 @@ impl DomBridge {
                 if (!found && value !== null && value !== undefined && value !== '') {
                     out.push(prop + ': ' + String(value));
                 }
-                __ox_setAttr(nodeId, 'style', out.join('; '));
+                __sol_setAttr(nodeId, 'style', out.join('; '));
             };
-            globalThis.__ox_setProperty = function(nodeId, key, value) {
+            globalThis.__sol_setProperty = function(nodeId, key, value) {
                 if (key === 'className') key = 'class';
                 if (key.startsWith('class:')) {
-                    __ox_toggleClass(nodeId, key.slice(6), Boolean(value));
+                    __sol_toggleClass(nodeId, key.slice(6), Boolean(value));
                     return;
                 }
                 if (key.startsWith('style:')) {
-                    __ox_setStyleDecl(nodeId, key.slice(6), value);
+                    __sol_setStyleDecl(nodeId, key.slice(6), value);
                     return;
                 }
                 if (typeof value === 'function') {
-                    var event = __ox_extractEventName(key);
+                    var event = __sol_extractEventName(key);
                     if (event !== null) {
-                        __ox_setHandler(nodeId, event, value);
+                        __sol_setHandler(nodeId, event, value);
                     }
                     // Non-event function properties (e.g. "ref") are ignored.
                 } else if (value !== null && value !== undefined) {
-                    __ox_setAttr(nodeId, key, String(value));
+                    __sol_setAttr(nodeId, key, String(value));
                 } else {
                     // null/undefined → remove handler if any
-                    var event = __ox_extractEventName(key);
+                    var event = __sol_extractEventName(key);
                     if (event !== null) {
-                        __ox_removeHandler(nodeId, event);
+                        __sol_removeHandler(nodeId, event);
                     }
                 }
             };
             "#,
         )?;
 
-        // ── __ox_extractEventName — JS helper ─────────────────────────────────
+        // ── __sol_extractEventName — JS helper ─────────────────────────────────
         ctx.eval::<(), _>(
             r#"
-            globalThis.__ox_extractEventName = function(key) {
+            globalThis.__sol_extractEventName = function(key) {
                 let event = null;
                 if (key.startsWith('on:')) event = key.slice(3).toLowerCase();
                 else if (key.startsWith('on') && key.length > 2) event = key.slice(2).toLowerCase();
@@ -639,11 +681,11 @@ impl DomBridge {
             "#,
         )?;
 
-        // ── __ox_removeHandler — removes a stored handler ─────────────────────
+        // ── __sol_removeHandler — removes a stored handler ─────────────────────
         {
             let handlers = Rc::clone(&self.handlers);
             globals.set(
-                "__ox_removeHandler",
+                "__sol_removeHandler",
                 Function::new(
                     ctx.clone(),
                     move |node_id: usize, event_name: String| -> JsResult<()> {
@@ -665,7 +707,7 @@ impl DomBridge {
             let doc = Rc::clone(&self.doc);
             let selects = Rc::clone(&self.selects);
             globals.set(
-                "__ox_insertNode",
+                "__sol_insertNode",
                 Function::new(
                     ctx.clone(),
                     move |parent: usize, node: usize, anchor: Option<usize>| -> JsResult<()> {
@@ -717,7 +759,7 @@ impl DomBridge {
             let doc = Rc::clone(&self.doc);
             let selects = Rc::clone(&self.selects);
             globals.set(
-                "__ox_removeNode",
+                "__sol_removeNode",
                 Function::new(
                     ctx.clone(),
                     move |_parent: usize, node: usize| -> JsResult<()> {
@@ -727,7 +769,7 @@ impl DomBridge {
                             find_parent_select(&borrow, node)
                         };
 
-                        doc.borrow_mut().mutate().remove_and_drop_node(node);
+                        doc.borrow_mut().mutate().remove_node(node);
 
                         // Rebuild select state if this was an option
                         if let Some(select_id) = parent_select {
@@ -749,7 +791,7 @@ impl DomBridge {
             let doc = Rc::clone(&self.doc);
             let selects = Rc::clone(&self.selects);
             globals.set(
-                "__ox_setText",
+                "__sol_setText",
                 Function::new(
                     ctx.clone(),
                     move |node_id: usize, text: String| -> JsResult<()> {
@@ -791,11 +833,25 @@ impl DomBridge {
             )?;
         }
 
+        // ── isTextNode ───────────────────────────────────────────────────────
+        {
+            let doc = Rc::clone(&self.doc);
+            globals.set(
+                "__sol_isTextNode",
+                Function::new(ctx.clone(), move |node_id: usize| -> JsResult<bool> {
+                    Ok(doc
+                        .borrow()
+                        .get_node(node_id)
+                        .is_some_and(|node| matches!(node.data, blitz_dom::NodeData::Text(_))))
+                }),
+            )?;
+        }
+
         // ── Tree-traversal ops (used by Solid's reconciler) ───────────────────
         {
             let doc = Rc::clone(&self.doc);
             globals.set(
-                "__ox_getFirstChild",
+                "__sol_getFirstChild",
                 Function::new(
                     ctx.clone(),
                     move |node_id: usize| -> JsResult<Option<usize>> {
@@ -810,7 +866,7 @@ impl DomBridge {
         {
             let doc = Rc::clone(&self.doc);
             globals.set(
-                "__ox_getNextSibling",
+                "__sol_getNextSibling",
                 Function::new(
                     ctx.clone(),
                     move |node_id: usize| -> JsResult<Option<usize>> {
@@ -827,7 +883,7 @@ impl DomBridge {
         {
             let doc = Rc::clone(&self.doc);
             globals.set(
-                "__ox_getParentNode",
+                "__sol_getParentNode",
                 Function::new(
                     ctx.clone(),
                     move |node_id: usize| -> JsResult<Option<usize>> {
@@ -856,7 +912,16 @@ mod tests {
         let handlers = Rc::new(RefCell::new(HandlerMap::new()));
         let inputs = crate::input::new_registry();
         let selects = crate::select::new_registry();
-        let bridge = DomBridge::new(Rc::clone(&doc), Rc::clone(&handlers), inputs, selects);
+        let img_watcher = crate::img::new_handle();
+        let base_url = Rc::new(RefCell::new(Url::parse("file:///").expect("base url")));
+        let bridge = DomBridge::new(
+            Rc::clone(&doc),
+            Rc::clone(&handlers),
+            inputs,
+            selects,
+            img_watcher,
+            base_url,
+        );
         (doc, handlers, bridge)
     }
 
@@ -888,17 +953,18 @@ mod tests {
             bridge.install(ctx.clone()).unwrap();
             let g = ctx.globals();
             for name in &[
-                "__ox_createElement",
-                "__ox_createTextNode",
-                "__ox_setProperty",
-                "__ox_setAttr",
-                "__ox_setHandler",
-                "__ox_insertNode",
-                "__ox_removeNode",
-                "__ox_setText",
-                "__ox_getFirstChild",
-                "__ox_getNextSibling",
-                "__ox_getParentNode",
+                "__sol_createElement",
+                "__sol_createTextNode",
+                "__sol_setProperty",
+                "__sol_setAttr",
+                "__sol_setHandler",
+                "__sol_insertNode",
+                "__sol_removeNode",
+                "__sol_setText",
+                "__sol_isTextNode",
+                "__sol_getFirstChild",
+                "__sol_getNextSibling",
+                "__sol_getParentNode",
             ] {
                 let _: Value = g
                     .get(*name)
@@ -912,8 +978,8 @@ mod tests {
         let (doc, _, bridge, _rt, ctx) = setup();
         ctx.with(|ctx| {
             bridge.install(ctx.clone()).unwrap();
-            let elem_id: usize = ctx.eval("__ox_createElement('div')").unwrap();
-            let text_id: usize = ctx.eval("__ox_createTextNode('hello')").unwrap();
+            let elem_id: usize = ctx.eval("__sol_createElement('div')").unwrap();
+            let text_id: usize = ctx.eval("__sol_createTextNode('hello')").unwrap();
             assert_ne!(elem_id, text_id);
             let d = doc.borrow();
             assert!(d.get_node(elem_id).is_some());
@@ -927,10 +993,40 @@ mod tests {
         ctx.with(|ctx| {
             bridge.install(ctx.clone()).unwrap();
             let child_id: usize = ctx
-                .eval("const d = __ox_createElement('div'); __ox_insertNode(0, d, null); d")
+                .eval("const d = __sol_createElement('div'); __sol_insertNode(0, d, null); d")
                 .unwrap();
             let d = doc.borrow();
             assert!(d.get_node(0).unwrap().children.contains(&child_id));
+        });
+    }
+
+    #[test]
+    fn remove_node_detaches_without_reusing_id() {
+        let (doc, _, bridge, _rt, ctx) = setup();
+        ctx.with(|ctx| {
+            bridge.install(ctx.clone()).unwrap();
+            let removed_id: usize = ctx
+                .eval(
+                    "const d = __sol_createElement('div'); \
+                     __sol_insertNode(0, d, null); \
+                     __sol_removeNode(0, d); \
+                     d",
+                )
+                .unwrap();
+            let next_id: usize = ctx.eval("__sol_createElement('div')").unwrap();
+
+            assert_ne!(
+                removed_id, next_id,
+                "removed node ids must not be reused while Solid may still hold handles"
+            );
+
+            let d = doc.borrow();
+            assert!(
+                d.get_node(removed_id)
+                    .is_some_and(|node| node.parent.is_none()),
+                "removed node should be detached"
+            );
+            assert!(d.get_node(0).unwrap().children.is_empty());
         });
     }
 
@@ -940,7 +1036,7 @@ mod tests {
         ctx.with(|ctx| {
             bridge.install(ctx.clone()).unwrap();
             let text_id: usize = ctx
-                .eval("const t = __ox_createTextNode('old'); __ox_setText(t, 'new'); t")
+                .eval("const t = __sol_createTextNode('old'); __sol_setText(t, 'new'); t")
                 .unwrap();
             let d = doc.borrow();
             if let blitz_dom::NodeData::Text(ref td) = d.get_node(text_id).unwrap().data {
@@ -952,13 +1048,27 @@ mod tests {
     }
 
     #[test]
+    fn is_text_node_reports_node_kind() {
+        let (_, _, bridge, _rt, ctx) = setup();
+        ctx.with(|ctx| {
+            bridge.install(ctx.clone()).unwrap();
+            let text_id: usize = ctx.eval("__sol_createTextNode('hello')").unwrap();
+            let elem_id: usize = ctx.eval("__sol_createElement('div')").unwrap();
+            let text_is_text: bool = ctx.eval(format!("__sol_isTextNode({text_id})")).unwrap();
+            let elem_is_text: bool = ctx.eval(format!("__sol_isTextNode({elem_id})")).unwrap();
+            assert!(text_is_text);
+            assert!(!elem_is_text);
+        });
+    }
+
+    #[test]
     fn set_property_string_sets_attribute() {
         let (doc, _, bridge, _rt, ctx) = setup();
         ctx.with(|ctx| {
             bridge.install(ctx.clone()).unwrap();
-            let node_id: usize = ctx.eval("__ox_createElement('div')").unwrap();
+            let node_id: usize = ctx.eval("__sol_createElement('div')").unwrap();
             let _: Value = ctx
-                .eval(format!("__ox_setProperty({node_id}, 'style', 'color:red')"))
+                .eval(format!("__sol_setProperty({node_id}, 'style', 'color:red')"))
                 .unwrap();
             let d = doc.borrow();
             let elem = d.get_node(node_id).unwrap().element_data().unwrap();
@@ -974,21 +1084,21 @@ mod tests {
         let (doc, _, bridge, _rt, ctx) = setup();
         ctx.with(|ctx| {
             bridge.install(ctx.clone()).unwrap();
-            let select_id: usize = ctx.eval("__ox_createElement('select')").unwrap();
-            let placeholder_id: usize = ctx.eval("__ox_createElement('option')").unwrap();
-            let first_id: usize = ctx.eval("__ox_createElement('option')").unwrap();
+            let select_id: usize = ctx.eval("__sol_createElement('select')").unwrap();
+            let placeholder_id: usize = ctx.eval("__sol_createElement('option')").unwrap();
+            let first_id: usize = ctx.eval("__sol_createElement('option')").unwrap();
 
             let _: Value = ctx
                 .eval(format!(
-                    "__ox_setProperty({placeholder_id}, 'value', '');\
-                     __ox_setProperty({placeholder_id}, 'disabled', '');\
-                     __ox_setProperty({placeholder_id}, 'selected', '');\
-                     __ox_setProperty({placeholder_id}, 'hidden', '');\
-                     __ox_insertNode({placeholder_id}, __ox_createTextNode('Choose..'), null);\
-                     __ox_insertNode({select_id}, {placeholder_id}, null);\
-                     __ox_setProperty({first_id}, 'value', 'option1');\
-                     __ox_insertNode({first_id}, __ox_createTextNode('First Option'), null);\
-                     __ox_insertNode({select_id}, {first_id}, null);"
+                    "__sol_setProperty({placeholder_id}, 'value', '');\
+                     __sol_setProperty({placeholder_id}, 'disabled', '');\
+                     __sol_setProperty({placeholder_id}, 'selected', '');\
+                     __sol_setProperty({placeholder_id}, 'hidden', '');\
+                     __sol_insertNode({placeholder_id}, __sol_createTextNode('Choose..'), null);\
+                     __sol_insertNode({select_id}, {placeholder_id}, null);\
+                     __sol_setProperty({first_id}, 'value', 'option1');\
+                     __sol_insertNode({first_id}, __sol_createTextNode('First Option'), null);\
+                     __sol_insertNode({select_id}, {first_id}, null);"
                 ))
                 .unwrap();
 
@@ -1000,7 +1110,7 @@ mod tests {
             }
 
             let _: Value = ctx
-                .eval(format!("__ox_setProperty({select_id}, 'value', 'option1')"))
+                .eval(format!("__sol_setProperty({select_id}, 'value', 'option1')"))
                 .unwrap();
 
             {
@@ -1032,9 +1142,9 @@ mod tests {
         let (_, handlers, bridge, _rt, ctx) = setup();
         ctx.with(|ctx| {
             bridge.install(ctx.clone()).unwrap();
-            let node_id: usize = ctx.eval("__ox_createElement('button')").unwrap();
+            let node_id: usize = ctx.eval("__sol_createElement('button')").unwrap();
             let _: Value = ctx
-                .eval(format!("__ox_setProperty({node_id}, 'onClick', () => 42)"))
+                .eval(format!("__sol_setProperty({node_id}, 'onClick', () => 42)"))
                 .unwrap();
             let map = handlers.borrow();
             assert!(
@@ -1050,10 +1160,10 @@ mod tests {
         let (_, handlers, bridge, _rt, ctx) = setup();
         ctx.with(|ctx| {
             bridge.install(ctx.clone()).unwrap();
-            let node_id: usize = ctx.eval("__ox_createElement('button')").unwrap();
+            let node_id: usize = ctx.eval("__sol_createElement('button')").unwrap();
             let _: Value = ctx
                 .eval(format!(
-                    "__ox_setProperty({node_id}, 'on:mousedown', () => 0)"
+                    "__sol_setProperty({node_id}, 'on:mousedown', () => 0)"
                 ))
                 .unwrap();
             let map = handlers.borrow();
@@ -1067,10 +1177,10 @@ mod tests {
         let (_, handlers, bridge, _rt, ctx) = setup();
         let node_id: usize = ctx.with(|ctx| {
             bridge.install(ctx.clone()).unwrap();
-            let nid: usize = ctx.eval("__ox_createElement('button')").unwrap();
+            let nid: usize = ctx.eval("__sol_createElement('button')").unwrap();
             let _: Value = ctx
                 .eval(format!(
-                    "globalThis.__count = 0; __ox_setProperty({nid}, 'onClick', () => {{ __count++ }})"
+                    "globalThis.__count = 0; __sol_setProperty({nid}, 'onClick', () => {{ __count++ }})"
                 ))
                 .unwrap();
             nid
@@ -1099,9 +1209,9 @@ mod tests {
         let (_, handlers, bridge, _rt, ctx) = setup();
         ctx.with(|ctx| {
             bridge.install(ctx.clone()).unwrap();
-            let node_id: usize = ctx.eval("__ox_createElement('button')").unwrap();
+            let node_id: usize = ctx.eval("__sol_createElement('button')").unwrap();
             let _: Value = ctx
-                .eval(format!("__ox_setProperty({node_id}, 'onClick', () => 1)"))
+                .eval(format!("__sol_setProperty({node_id}, 'onClick', () => 1)"))
                 .unwrap();
             assert!(
                 handlers
@@ -1110,7 +1220,7 @@ mod tests {
             );
             // Passing null removes the handler (and drops the Persistent inside ctx.with).
             let _: Value = ctx
-                .eval(format!("__ox_setProperty({node_id}, 'onClick', null)"))
+                .eval(format!("__sol_setProperty({node_id}, 'onClick', null)"))
                 .unwrap();
             assert!(
                 !handlers

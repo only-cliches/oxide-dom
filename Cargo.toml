@@ -1,20 +1,22 @@
 [package]
-name = "oxide-dom"
+name = "solite"
 version = "0.1.0"
 edition = "2024"
+
+[workspace]
+members = ["solite-build"]
+# The vendored blitz packages are their own workspace; keep them out of ours.
+exclude = ["vendor"]
+resolver = "2"
 
 [features]
 default = ["with_system_fonts", "jsx-compiler"]
 with_system_fonts = ["blitz-dom/system_fonts"]
-jsx-compiler = [
-    "dep:oxc_allocator",
-    "dep:oxc_codegen",
-    "dep:oxc_diagnostics",
-    "dep:oxc_parser",
-    "dep:oxc_semantic",
-    "dep:oxc_span",
-    "dep:oxc_transformer",
-]
+jsx-compiler = ["dep:solite-build"]
+# Opt-in winit translation layer. Pulls in `winit` as a regular dep so hosts
+# can use the `solite::winit` helpers to forward window events into an
+# `Instance` without hand-rolling key/mouse/modifier translation.
+winit = ["dep:winit"]
 
 [dependencies]
 blitz-dom = { version = "=0.3.0-alpha.4", path = "vendor/blitz/packages/blitz-dom", default-features = false, features = ["svg", "woff", "accessibility", "file_input", "custom-widget", "incremental"] }
@@ -24,25 +26,30 @@ anyrender = "0.11"
 anyrender_vello = "0.11"
 kurbo = "0.13"
 peniko = "0.6"
-parley = "0.10"
+parley = { version = "0.10", default-features = false, features = ["std"] }
 stylo = "0.18"
 style_dom = { version = "0.18", package = "stylo_dom" }
+relative-path = "1"
 wgpu = "29"
 rquickjs = { version = "0.9", features = ["loader", "macro"] }
 tokio = { version = "1", features = ["sync"] }
 serde_json = "1"
 notify = "6"
-oxc_allocator = { version = "0.135.0", optional = true }
-oxc_codegen = { version = "0.135.0", optional = true }
-oxc_diagnostics = { version = "0.135.0", optional = true }
-oxc_parser = { version = "0.135.0", optional = true }
-oxc_semantic = { version = "0.135.0", optional = true }
-oxc_span = { version = "0.135.0", optional = true }
-oxc_transformer = { version = "0.135.0", optional = true }
+url = "2"
+data-url = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+bytes = "1"
+solite-build = { version = "0.1.0", path = "solite-build", optional = true }
+winit = { version = "0.30", optional = true }
 
 [dev-dependencies]
 winit = "0.30"
 pollster = "0.4"
+# Used by tests/solid_universal_fixtures.rs to re-format JS for parity checks.
+oxc_allocator = "0.135.0"
+oxc_codegen = "0.135.0"
+oxc_parser = "0.135.0"
+oxc_span = "0.135.0"
 image = "0.25"
 stylo = "0.18"
 arboard = "3.4"
@@ -62,11 +69,31 @@ path = "examples/text_input.rs"
 [[example]]
 name = "kitchen_sink"
 path = "examples/kitchen_sink.rs"
+required-features = ["winit"]
+
+[[example]]
+name = "todo"
+path = "examples/todo.rs"
+required-features = ["winit"]
 
 [[example]]
 name = "offscreen_capture"
 path = "examples/offscreen_capture.rs"
 
 [[example]]
+name = "images"
+path = "examples/images.rs"
+required-features = ["winit"]
+
+[[example]]
+name = "custom_font"
+path = "examples/custom_font.rs"
+required-features = ["winit"]
+
+[[example]]
 name = "select_popup_capture"
 path = "examples/select_popup_capture.rs"
+
+[[example]]
+name = "perf_animate_elements"
+path = "examples/perf_animate_elements.rs"

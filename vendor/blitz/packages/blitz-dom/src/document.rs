@@ -1539,10 +1539,11 @@ impl BaseDocument {
         let mut bubble_x = 0.0;
         let mut bubble_y = 0.0;
 
+        // taffy's `scroll_width`/`scroll_height` already return the maximum
+        // scrollable distance (content_size - size, floored at 0), so they
+        // are the upper bound for scroll_offset directly.
         let scroll_width = node.final_layout.scroll_width() as f64;
         let scroll_height = node.final_layout.scroll_height() as f64;
-        let max_scroll_x = (scroll_width - node.final_layout.size.width as f64).max(0.0);
-        let max_scroll_y = (scroll_height - node.final_layout.size.height as f64).max(0.0);
 
         // Handle sub document case
         if let Some(mut sub_doc) = node.subdoc_mut().map(|doc| doc.inner_mut()) {
@@ -1562,9 +1563,9 @@ impl BaseDocument {
         } else if new_x < 0.0 {
             bubble_x = -new_x;
             node.scroll_offset.x = 0.0;
-        } else if new_x > max_scroll_x {
-            bubble_x = max_scroll_x - new_x;
-            node.scroll_offset.x = max_scroll_x;
+        } else if new_x > scroll_width {
+            bubble_x = scroll_width - new_x;
+            node.scroll_offset.x = scroll_width;
         } else {
             node.scroll_offset.x = new_x;
         }
@@ -1574,9 +1575,9 @@ impl BaseDocument {
         } else if new_y < 0.0 {
             bubble_y = -new_y;
             node.scroll_offset.y = 0.0;
-        } else if new_y > max_scroll_y {
-            bubble_y = max_scroll_y - new_y;
-            node.scroll_offset.y = max_scroll_y;
+        } else if new_y > scroll_height {
+            bubble_y = scroll_height - new_y;
+            node.scroll_offset.y = scroll_height;
         } else {
             node.scroll_offset.y = new_y;
         }

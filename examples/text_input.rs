@@ -8,14 +8,16 @@ mod args;
 mod blit;
 #[path = "common/capture.rs"]
 mod capture;
+#[path = "common/keys.rs"]
+mod keys;
 
 use blit::{BlitContext, BlitDraw};
 use blitz_traits::shell::{ClipboardError, ShellProvider};
-use oxide_dom::{Instance, InstanceConfig, KeyboardEvent};
+use solite::{Instance, InstanceConfig, KeyboardEvent};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, KeyEvent, MouseButton as WinitMouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::keyboard::{Key, ModifiersState, NamedKey, PhysicalKey};
+use winit::keyboard::{ModifiersState, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 const TEXT_INPUT_CSS: &str = r#"
@@ -35,22 +37,23 @@ const TEXT_INPUT_CSS: &str = r#"
 "#;
 
 const TEXT_INPUT_COMPONENT: &str = r#"
-import { render } from "oxide-runtime";
+import { render } from "solite-runtime";
 
 function App() {
-  const field = __ox_createElement("input");
-  __ox_setProperty(field, "className", "field");
-  __ox_setProperty(field, "type", "text");
-  __ox_setProperty(field, "placeholder", "Type here...");
-  __ox_setProperty(field, "value", globalThis.state.value || "");
-  __ox_setProperty(field, "onInput", (event) => {
-    globalThis.state.value = event.value;
-  });
-
-  return field;
+  return (
+    <input
+      class="field"
+      type="text"
+      placeholder="Type here..."
+      value={globalThis.state.value || ""}
+      onInput={(event) => {
+        globalThis.state.value = event.value;
+      }}
+    />
+  );
 }
 
-render(() => App(), __OX_ROOT__);
+render(() => App(), __SOL_ROOT__);
 "#;
 
 struct App {
@@ -113,7 +116,7 @@ impl App {
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let attrs = Window::default_attributes()
-            .with_title("oxide-dom: text input")
+            .with_title("solite: text input")
             .with_inner_size(winit::dpi::LogicalSize::new(320u32, 80u32));
         let window = Arc::new(event_loop.create_window(attrs).expect("window"));
 
@@ -125,10 +128,10 @@ impl ApplicationHandler for App {
         // shows real text rather than an empty field.
         let component_source = if self.capture_path.is_some() {
             TEXT_INPUT_COMPONENT.replace(
-                "render(() => App(), __OX_ROOT__);",
+                "render(() => App(), __SOL_ROOT__);",
                 r#"
 globalThis.state.value = "hello world";
-render(() => App(), __OX_ROOT__);
+render(() => App(), __SOL_ROOT__);
 "#,
             )
         } else {
@@ -143,9 +146,11 @@ render(() => App(), __OX_ROOT__);
                 queue: gpu.queue.clone(),
                 stylesheets: vec![TEXT_INPUT_CSS.to_string()],
                 document_scroll: false,
+                base_url: None,
             },
             &component_source,
-        );
+        )
+        .expect("create instance");
         instance.set_shell_provider(Arc::new(SystemClipboard));
         let _ = instance.tick();
 
@@ -157,19 +162,19 @@ render(() => App(), __OX_ROOT__);
             let _ = instance.dispatch_mouse(
                 20.0,
                 20.0,
-                oxide_dom::MouseEvent::Down {
+                solite::MouseEvent::Down {
                     x: 20.0,
                     y: 20.0,
-                    button: oxide_dom::MouseButton::Left,
+                    button: solite::MouseButton::Left,
                 },
             );
             let _ = instance.dispatch_mouse(
                 20.0,
                 20.0,
-                oxide_dom::MouseEvent::Up {
+                solite::MouseEvent::Up {
                     x: 20.0,
                     y: 20.0,
-                    button: oxide_dom::MouseButton::Left,
+                    button: solite::MouseButton::Left,
                 },
             );
             for ch in "!".chars() {
@@ -282,7 +287,7 @@ render(() => App(), __OX_ROOT__);
                     let _ = instance.dispatch_mouse(
                         self.last_mouse.0,
                         self.last_mouse.1,
-                        oxide_dom::MouseEvent::Move {
+                        solite::MouseEvent::Move {
                             x: self.last_mouse.0,
                             y: self.last_mouse.1,
                         },
@@ -293,21 +298,21 @@ render(() => App(), __OX_ROOT__);
             WindowEvent::MouseInput { state, button, .. } => {
                 let (x, y) = self.last_mouse;
                 let button = match button {
-                    WinitMouseButton::Left => Some(oxide_dom::MouseButton::Left),
-                    WinitMouseButton::Right => Some(oxide_dom::MouseButton::Right),
-                    WinitMouseButton::Middle => Some(oxide_dom::MouseButton::Middle),
+                    WinitMouseButton::Left => Some(solite::MouseButton::Left),
+                    WinitMouseButton::Right => Some(solite::MouseButton::Right),
+                    WinitMouseButton::Middle => Some(solite::MouseButton::Middle),
                     _ => None,
                 };
 
                 if let Some(button) = button {
                     if let Some(instance) = self.instance.as_mut() {
-                        if state == ElementState::Pressed && button == oxide_dom::MouseButton::Left
+                        if state == ElementState::Pressed && button == solite::MouseButton::Left
                         {
                             println!("text_input: mouse down at ({x:.1}, {y:.1})");
                         }
                         let event = match state {
-                            ElementState::Pressed => oxide_dom::MouseEvent::Down { x, y, button },
-                            ElementState::Released => oxide_dom::MouseEvent::Up { x, y, button },
+                            ElementState::Pressed => solite::MouseEvent::Down { x, y, button },
+                            ElementState::Released => solite::MouseEvent::Up { x, y, button },
                         };
                         let tick = instance.dispatch_mouse(x, y, event);
                         if tick.needs_paint {
@@ -336,7 +341,7 @@ render(() => App(), __OX_ROOT__);
                 ..
             } => {
                 if let Some(instance) = self.instance.as_mut() {
-                    let key = key_to_string(&logical_key, text.as_deref());
+                    let key = keys::key_to_string(&logical_key, text.as_deref());
                     let code = match physical_key {
                         PhysicalKey::Code(code) => format!("{:?}", code),
                         _ => String::new(),
@@ -375,7 +380,7 @@ render(() => App(), __OX_ROOT__);
                 ..
             } => {
                 if let Some(instance) = self.instance.as_mut() {
-                    let key = key_to_string(&logical_key, text.as_deref());
+                    let key = keys::key_to_string(&logical_key, text.as_deref());
                     let code = match physical_key {
                         PhysicalKey::Code(code) => format!("{:?}", code),
                         _ => String::new(),
@@ -434,28 +439,6 @@ render(() => App(), __OX_ROOT__);
     }
 }
 
-fn key_to_string(logical_key: &Key, text: Option<&str>) -> String {
-    if let Some(text) = text.filter(|text| !text.is_empty()) {
-        if text != "\u{8}" {
-            return text.to_string();
-        }
-    }
-    if let Key::Named(named) = logical_key {
-        if let NamedKey::Space = named {
-            return " ".to_string();
-        }
-        return format!("{named:?}");
-    }
-
-    match logical_key {
-        Key::Character(text) => text.to_string(),
-        Key::Named(named) => format!("{named:?}"),
-        Key::Unidentified(_) => "Unidentified".to_string(),
-        Key::Dead(Some(c)) => c.to_string(),
-        Key::Dead(None) => String::new(),
-    }
-}
-
 async fn init_gpu(window: Arc<Window>) -> Gpu {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::all(),
@@ -474,7 +457,7 @@ async fn init_gpu(window: Arc<Window>) -> Gpu {
 
     let (device, queue) = adapter
         .request_device(&wgpu::DeviceDescriptor {
-            label: Some("oxide-dom-text-input-device"),
+            label: Some("solite-text-input-device"),
             required_features: wgpu::Features::empty(),
             required_limits: wgpu::Limits::default(),
             experimental_features: wgpu::ExperimentalFeatures::disabled(),

@@ -1,4 +1,4 @@
-// Solid universal renderer + Reactivity bridge for oxide-dom.
+// Solid universal renderer + Reactivity bridge for solite.
 // Build with:
 //
 //   cd js && npx esbuild runtime.ts --bundle --format=esm --outfile=dist/runtime.js
@@ -7,25 +7,44 @@
 //    - Bridge node IDs are wrapped in opaque objects so Solid never treats them as text.
 // 2) State ops:
 //    - `state` is a JS proxy backed by a Solid store.
-//    - Rust calls `__ox_apply_state_patch(path, value)` each `tick()`.
-//    - JS writes to `state` call `__ox_state_set(path, value_json)` to mirror to Rust.
+//    - Rust calls `__sol_apply_state_patch(path, value)` each `tick()`.
+//    - JS writes to `state` call `__sol_state_set(path, value_json)` to mirror to Rust.
 
-import { createEffect, createMemo, createSignal } from "solid-js";
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  onCleanup,
+  untrack,
+} from "solid-js";
 import { createRenderer } from "solid-js/universal";
 import { createStore } from "solid-js/store";
 
 // Opaque wrapper for a Rust-side blitz-dom node ID.
 export interface NodeHandle {
-  readonly __oxId: number;
+  readonly __solId: number;
 }
 
 type PathPart = string | number;
 
-const wrap = (id: number): NodeHandle => ({ __oxId: id });
+// Memoized so a given DOM id always returns the same wrapper object. Solid's
+// universal renderer uses `===` to compare node handles (e.g. cleanChildren
+// and reconcileArrays check `getParentNode(el) === parent` to decide what to
+// remove); fresh wrappers per call would silently break list reconciliation
+// when a reactive child swaps between an array of nodes and a single node.
+const handleCache = new Map<number, NodeHandle>();
+const wrap = (id: number): NodeHandle => {
+  let handle = handleCache.get(id);
+  if (!handle) {
+    handle = { __solId: id };
+    handleCache.set(id, handle);
+  }
+  return handle;
+};
 const unwrap = (n: NodeHandle | number | null | undefined): number =>
-  typeof n === "number" ? n : n?.__oxId ?? 0;
+  typeof n === "number" ? n : n?.__solId ?? 0;
 const unwrapOpt = (n: NodeHandle | number | null | undefined): number | null =>
-  n == null ? null : typeof n === "number" ? n : n.__oxId;
+  n == null ? null : typeof n === "number" ? n : n.__solId;
 
 const toPathParts = (path: string): PathPart[] =>
   path === ""
@@ -36,32 +55,41 @@ const normalizeStateValue = (value: unknown) =>
   value && typeof value === "object" ? value : {};
 
 // Low-level bridge ops provided by Rust on the global scope.
-declare const __ox_createElement: (tag: string) => number;
-declare const __ox_createTextNode: (text: string) => number;
-declare const __ox_setProperty: (
+declare const __sol_createElement: (tag: string) => number;
+declare const __sol_createTextNode: (text: string) => number;
+declare const __sol_setProperty: (
   node: number | NodeHandle,
   key: string,
   value: unknown,
 ) => void;
-declare const __ox_insertNode: (
+declare const __sol_insertNode: (
   parent: number | NodeHandle,
   node: number | NodeHandle,
   anchor: number | NodeHandle | null,
 ) => void;
-declare const __ox_removeNode: (
+declare const __sol_removeNode: (
   parent: number | NodeHandle,
   node: number | NodeHandle,
 ) => void;
-declare const __ox_setText: (node: number | NodeHandle, value: string) => void;
-declare const __ox_getFirstChild: (node: number | NodeHandle) => number | null;
-declare const __ox_getNextSibling: (node: number | NodeHandle) => number | null;
-declare const __ox_getParentNode: (node: number | NodeHandle) => number | null;
-declare const __ox_state_set: (path: string, valueJson: string) => void;
+declare const __sol_setText: (node: number | NodeHandle, value: string) => void;
+declare const __sol_isTextNode: (node: number | NodeHandle) => boolean;
+declare const __sol_getFirstChild: (node: number | NodeHandle) => number | null;
+declare const __sol_getNextSibling: (node: number | NodeHandle) => number | null;
+declare const __sol_getParentNode: (node: number | NodeHandle) => number | null;
+declare const __sol_state_set: (path: string, valueJson: string) => void;
 
 declare global {
   // Exported for host + app code.
-  var __ox_apply_state_patch: ((path: string, valueJson: string) => void) | undefined;
+  var __sol_apply_state_patch: ((path: string, valueJson: string) => void) | undefined;
 }
+
+type RuntimeEventListener = (event: {
+  type: string;
+  detail: unknown;
+  payload: unknown;
+  defaultPrevented: boolean;
+  preventDefault: () => void;
+}) => void;
 
 const stateStore = createStore<Record<string, unknown>>(normalizeStateValue({}));
 let stateMap: Record<string, unknown> = stateStore[0] as unknown as Record<string, unknown>;
@@ -133,7 +161,7 @@ const makeStateProxy = (path: PathPart[]): any => {
 
         const nextParts = [...path, part];
         setStateForParts([...nextParts], value);
-        __ox_state_set(nextParts.join("."), JSON.stringify(value));
+        __sol_state_set(nextParts.join("."), JSON.stringify(value));
         return true;
       },
       ownKeys: () => {
@@ -177,43 +205,53 @@ const stateProxyObj = makeStateProxy([]);
 
 // Keep Rust-facing calls numeric, but expose wrapped NodeHandle values to app/renderer
 // code so node references remain stable object references for reconciler identity.
-const rawCreateElement = __ox_createElement;
-const rawCreateTextNode = __ox_createTextNode;
-const rawSetProperty = __ox_setProperty;
-const rawInsertNode = __ox_insertNode;
-const rawRemoveNode = __ox_removeNode;
-const rawSetText = __ox_setText;
-const rawGetFirstChild = __ox_getFirstChild;
-const rawGetNextSibling = __ox_getNextSibling;
-const rawGetParentNode = __ox_getParentNode;
+const rawCreateElement = __sol_createElement;
+const rawCreateTextNode = __sol_createTextNode;
+const rawSetProperty = __sol_setProperty;
+const rawInsertNode = __sol_insertNode;
+const rawRemoveNode = __sol_removeNode;
+const rawSetText = __sol_setText;
+const rawIsTextNode = __sol_isTextNode;
+const rawGetFirstChild = __sol_getFirstChild;
+const rawGetNextSibling = __sol_getNextSibling;
+const rawGetParentNode = __sol_getParentNode;
 
-(globalThis as any).__ox_createElement = (tag: string) => wrap(rawCreateElement(tag));
-(globalThis as any).__ox_createTextNode = (text: string) =>
+(globalThis as any).__sol_createElement = (tag: string) => wrap(rawCreateElement(tag));
+(globalThis as any).__sol_createTextNode = (text: string) =>
   wrap(rawCreateTextNode(text));
-(globalThis as any).__ox_setProperty = (node: NodeHandle | number, key: string, value: unknown) =>
+(globalThis as any).__sol_setProperty = (node: NodeHandle | number, key: string, value: unknown) =>
   rawSetProperty(unwrap(node), key, value);
-(globalThis as any).__ox_insertNode = (
+(globalThis as any).__sol_insertNode = (
   parent: NodeHandle | number,
   node: NodeHandle | number,
   anchor: NodeHandle | number | null,
 ) => rawInsertNode(unwrap(parent), unwrap(node), unwrapOpt(anchor));
-(globalThis as any).__ox_removeNode = (parent: NodeHandle | number, node: NodeHandle | number) =>
+(globalThis as any).__sol_removeNode = (parent: NodeHandle | number, node: NodeHandle | number) =>
   rawRemoveNode(unwrap(parent), unwrap(node));
-(globalThis as any).__ox_setText = (node: NodeHandle | number, value: string) =>
+(globalThis as any).__sol_setText = (node: NodeHandle | number, value: string) =>
   rawSetText(unwrap(node), value);
-(globalThis as any).__ox_getFirstChild = (node: NodeHandle | number) =>
+(globalThis as any).__sol_isTextNode = (node: NodeHandle | number) =>
+  rawIsTextNode(unwrap(node));
+(globalThis as any).__sol_getFirstChild = (node: NodeHandle | number) =>
   rawGetFirstChild(unwrap(node));
-(globalThis as any).__ox_getNextSibling = (node: NodeHandle | number) =>
+(globalThis as any).__sol_getNextSibling = (node: NodeHandle | number) =>
   rawGetNextSibling(unwrap(node));
-(globalThis as any).__ox_getParentNode = (node: NodeHandle | number) =>
+(globalThis as any).__sol_getParentNode = (node: NodeHandle | number) =>
   rawGetParentNode(unwrap(node));
 
 const applyStatePatch = (path: string, value: unknown): void => {
   const parts = toPathParts(path);
   if (parts.length === 0) {
-    const [nextState, nextSetter] = createStore(normalizeStateValue(value));
-    stateMap = nextState as unknown as Record<string, unknown>;
-    setStateForPath = nextSetter;
+    const next = normalizeStateValue(value) as Record<string, unknown>;
+    const nextKeys = new Set(Object.keys(next));
+    for (const key of Object.keys(stateMap)) {
+      if (!nextKeys.has(key)) {
+        setStateForParts([key], undefined);
+      }
+    }
+    for (const [key, entryValue] of Object.entries(next)) {
+      setStateForParts([key], entryValue);
+    }
     proxyCache.clear();
     return;
   }
@@ -241,10 +279,10 @@ const runtimeState = {
     }
   },
 };
-(globalThis as any).__ox_state = runtimeState;
+(globalThis as any).__sol_state = runtimeState;
 
-// Rust side applies Rust-origin state patches here (no feedback through __ox_state_set).
-globalThis.__ox_apply_state_patch = (path: string, value_json: string) => {
+// Rust side applies Rust-origin state patches here (no feedback through __sol_state_set).
+globalThis.__sol_apply_state_patch = (path: string, value_json: string) => {
   let value: unknown = null;
   try {
     value = JSON.parse(value_json);
@@ -254,26 +292,157 @@ globalThis.__ox_apply_state_patch = (path: string, value_json: string) => {
   applyStatePatch(path, value);
 };
 
+const runtimeEventListeners = new Map<string, Set<RuntimeEventListener>>();
+
+const addRuntimeEventListener = (
+  type: string,
+  listener: RuntimeEventListener,
+): void => {
+  if (typeof type !== "string" || typeof listener !== "function") {
+    return;
+  }
+  let listeners = runtimeEventListeners.get(type);
+  if (!listeners) {
+    listeners = new Set();
+    runtimeEventListeners.set(type, listeners);
+  }
+  listeners.add(listener);
+};
+
+const removeRuntimeEventListener = (
+  type: string,
+  listener: RuntimeEventListener,
+): void => {
+  runtimeEventListeners.get(type)?.delete(listener);
+};
+
+const dispatchRuntimeEvent = (type: string, payloadJson: string): number => {
+  const listeners = runtimeEventListeners.get(type);
+  if (!listeners || listeners.size === 0) {
+    return 0;
+  }
+
+  let detail: unknown = null;
+  try {
+    detail = JSON.parse(payloadJson);
+  } catch (_err) {
+    detail = payloadJson;
+  }
+
+  let defaultPrevented = false;
+  const event = {
+    type,
+    detail,
+    payload: detail,
+    get defaultPrevented() {
+      return defaultPrevented;
+    },
+    preventDefault() {
+      defaultPrevented = true;
+    },
+  };
+
+  const snapshot = Array.from(listeners);
+  for (const listener of snapshot) {
+    try {
+      listener(event);
+    } catch (err) {
+      (globalThis as any).__sol_last_runtime_event_error =
+        err instanceof Error ? err.message : String(err);
+    }
+  }
+  return snapshot.length;
+};
+
+(globalThis as any).__sol_addEventListener = addRuntimeEventListener;
+(globalThis as any).__sol_removeEventListener = removeRuntimeEventListener;
+(globalThis as any).__sol_dispatch_runtime_event = dispatchRuntimeEvent;
+if (typeof (globalThis as any).addEventListener !== "function") {
+  (globalThis as any).addEventListener = addRuntimeEventListener;
+}
+if (typeof (globalThis as any).removeEventListener !== "function") {
+  (globalThis as any).removeEventListener = removeRuntimeEventListener;
+}
+
+const hyphenateStyleName = (name: string): string =>
+  name.replace(/[A-Z]/g, (match) => `-${match.toLowerCase()}`);
+
+const styleToString = (value: unknown): string => {
+  if (value == null || value === false) return "";
+  if (typeof value === "string") return value;
+  if (typeof value !== "object") return String(value);
+  return Object.entries(value as Record<string, unknown>)
+    .filter(([, v]) => v != null && v !== false)
+    .map(([k, v]) => `${hyphenateStyleName(k)}: ${String(v)}`)
+    .join("; ");
+};
+
+const classListToString = (value: unknown): string => {
+  if (value == null || value === false) return "";
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.filter(Boolean).join(" ");
+  if (typeof value !== "object") return String(value);
+  return Object.entries(value as Record<string, unknown>)
+    .filter(([, v]) => !!v)
+    .map(([k]) => k)
+    .join(" ");
+};
+
+const applyRuntimeProperty = (
+  node: NodeHandle | number,
+  name: string,
+  value: unknown,
+  _prev?: unknown,
+): unknown => {
+  const id = unwrap(node);
+  const event =
+    typeof name === "string"
+      ? (globalThis as any).__sol_extractEventName?.(name)
+      : null;
+
+  if (name === "ref") {
+    if (typeof value === "function") {
+      return untrack(() => (value as (node: NodeHandle | number) => unknown)(node));
+    }
+    return value;
+  }
+
+  if (typeof value === "function" && event == null) {
+    value = (value as () => unknown)();
+  }
+
+  if (name === "style") {
+    value = styleToString(value);
+  } else if (name === "classList") {
+    name = "class";
+    value = classListToString(value);
+  }
+
+  __sol_setProperty(id, name, value);
+  return value;
+};
+
 // Re-export renderer primitives used by app components.
 const renderer = createRenderer<NodeHandle>({
-  createElement: (tag) => (globalThis as any).__ox_createElement(tag),
-  createTextNode: (text) => (globalThis as any).__ox_createTextNode(text),
-  replaceText: (node, text) => __ox_setText(unwrap(node), text),
-  setProperty: (node, name, value) => __ox_setProperty(unwrap(node), name, value),
+  createElement: (tag) => (globalThis as any).__sol_createElement(tag),
+  createTextNode: (text) => (globalThis as any).__sol_createTextNode(text),
+  replaceText: (node, text) => __sol_setText(unwrap(node), text),
+  setProperty: (node, name, value, prev) =>
+    applyRuntimeProperty(node, name, value, prev),
   insertNode: (parent, node, anchor) =>
-    __ox_insertNode(unwrap(parent), unwrap(node), unwrapOpt(anchor)),
-  isTextNode: (_node) => false,
-  removeNode: (parent, node) => __ox_removeNode(unwrap(parent), unwrap(node)),
+    __sol_insertNode(unwrap(parent), unwrap(node), unwrapOpt(anchor)),
+  isTextNode: (node) => __sol_isTextNode(unwrap(node)),
+  removeNode: (parent, node) => __sol_removeNode(unwrap(parent), unwrap(node)),
   getParentNode: (node) => {
-    const id = __ox_getParentNode(unwrap(node));
+    const id = __sol_getParentNode(unwrap(node));
     return id != null ? wrap(id) : null;
   },
   getFirstChild: (node) => {
-    const id = __ox_getFirstChild(unwrap(node));
+    const id = __sol_getFirstChild(unwrap(node));
     return id != null ? wrap(id) : null;
   },
   getNextSibling: (node) => {
-    const id = __ox_getNextSibling(unwrap(node));
+    const id = __sol_getNextSibling(unwrap(node));
     return id != null ? wrap(id) : null;
   },
 });
@@ -309,9 +478,9 @@ const jsxCreateElement = (
       // Functions whose names start with `on` are event handlers — pass
       // through verbatim. Other functions are reactive value getters.
       if (typeof value === "function" && !/^on[A-Z]/.test(key)) {
-        createEffect(() => __ox_setProperty(id, key, value()));
+        createEffect(() => applyRuntimeProperty(id, key, value()));
       } else {
-        __ox_setProperty(id, key, value);
+        applyRuntimeProperty(id, key, value);
       }
     }
   }
@@ -322,7 +491,7 @@ const jsxCreateElement = (
     //
     // Stability optimisation: when both the previous and the current value
     // are a single simple text-like value, mutate the existing text node
-    // via __ox_setText instead of remove+create+insert. Keeping the same
+    // via __sol_setText instead of remove+create+insert. Keeping the same
     // node ID across re-renders matters because hover and focus state on
     // the Rust side index nodes by id — replacing the node would leave
     // `focused_node_id` pointing at a detached node.
@@ -342,13 +511,13 @@ const jsxCreateElement = (
         prevInsertedIds.length === 1 &&
         isSimpleText(value)
       ) {
-        (globalThis as any).__ox_setText(prevInsertedIds[0], String(value));
+        (globalThis as any).__sol_setText(prevInsertedIds[0], String(value));
         return;
       }
 
       for (const childId of prevInsertedIds) {
         try {
-          __ox_removeNode(id, childId);
+          __sol_removeNode(id, childId);
         } catch (_) {
           // ignore if already detached
         }
@@ -363,14 +532,14 @@ const jsxCreateElement = (
           return;
         }
         let childId: number;
-        if (typeof child === "object" && typeof (child as any).__oxId === "number") {
-          childId = (child as NodeHandle).__oxId;
+        if (typeof child === "object" && typeof (child as any).__solId === "number") {
+          childId = (child as NodeHandle).__solId;
         } else if (typeof child === "number" && Number.isInteger(child)) {
           childId = child;
         } else {
-          childId = (globalThis as any).__ox_createTextNode(String(child));
+          childId = (globalThis as any).__sol_createTextNode(String(child));
         }
-        __ox_insertNode(id, childId, null);
+        __sol_insertNode(id, childId, null);
         prevInsertedIds.push(childId);
       };
 
@@ -387,20 +556,20 @@ const jsxCreateElement = (
       for (const c of child) append(c);
       return;
     }
-    if (typeof child === "object" && typeof (child as any).__oxId === "number") {
-      __ox_insertNode(id, (child as NodeHandle).__oxId, null);
+    if (typeof child === "object" && typeof (child as any).__solId === "number") {
+      __sol_insertNode(id, (child as NodeHandle).__solId, null);
       return;
     }
     if (typeof child === "number" && Number.isInteger(child)) {
-      __ox_insertNode(id, child, null);
+      __sol_insertNode(id, child, null);
       return;
     }
     if (typeof child === "function") {
       appendReactive(child as () => unknown);
       return;
     }
-    const textId = (globalThis as any).__ox_createTextNode(String(child));
-    __ox_insertNode(id, textId, null);
+    const textId = (globalThis as any).__sol_createTextNode(String(child));
+    __sol_insertNode(id, textId, null);
   };
   for (const child of children) append(child);
   return node;
@@ -430,4 +599,4 @@ const _For = (props: { each?: any[]; children: (item: any, index: () => number) 
   return each.map((item, index) => props.children(item, () => index));
 };
 export { _For as For };
-export { createEffect, createMemo, createSignal };
+export { createEffect, createMemo, createSignal, onCleanup, untrack };

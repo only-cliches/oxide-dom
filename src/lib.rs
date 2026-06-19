@@ -1,23 +1,46 @@
-#[cfg(feature = "jsx-compiler")]
-mod compiler;
 mod events;
+mod focus;
+mod fonts;
+mod img;
 mod input;
 mod instance;
 mod js;
+mod net;
 mod renderer;
 mod scene;
 mod scrollbar;
 mod select;
 mod state;
+#[cfg(feature = "winit")]
+mod winit_integration;
 
+// The JSX/TS compiler and AOT bundler live in the lightweight `solite-build`
+// crate (so it can be a build-dependency without pulling in the renderer). Their
+// public API is re-exported here, unchanged, for application code.
 #[cfg(feature = "jsx-compiler")]
-pub use compiler::{CompileError, compile_component_file, compile_component_source};
+pub use solite_build::bundle;
+#[cfg(feature = "jsx-compiler")]
+pub use solite_build::{
+    CompileError, compile_component_file, compile_component_source, map_module_specifiers,
+};
 pub use events::{Event, KeyboardEvent, MouseButton, MouseEvent};
-pub use instance::{FileWatch, Instance, InstanceConfig, StylesheetId};
+pub use fonts::FontFormat;
+pub use instance::{
+    FileWatch, Instance, InstanceConfig, RegisterFontError, SourceChangeSummary, StylesheetId,
+};
 pub use js::TickResult;
+pub use js::VirtualSourceFile;
 pub use scene::{Scene, SceneSurface, SurfaceId, SurfaceRect};
 pub use scrollbar::ScrollbarTheme;
 pub use state::StateHandle;
+
+#[cfg(feature = "winit")]
+pub mod winit {
+    //! winit integration. Available when the `winit` feature is enabled.
+    pub use crate::winit_integration::{
+        WinitBridge, WinitEventTarget, WinitForward, WinitPollScheduler, key_to_string,
+    };
+}
 
 #[cfg(test)]
 mod tests {

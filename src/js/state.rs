@@ -2,18 +2,18 @@ use rquickjs::{Ctx, Function, Result as JsResult};
 
 use crate::state::StateHandle;
 
-/// Install `__ox_state_set` and `__ox_apply_state_patch` globals.
+/// Install `__sol_state_set` and `__sol_apply_state_patch` globals.
 ///
-/// - `__ox_state_set(path, value_json)` – called by the JS store when the user
+/// - `__sol_state_set(path, value_json)` – called by the JS store when the user
 ///   mutates state directly in JS; mirrors the value into Rust without re-queuing.
-/// - `__ox_apply_state_patch` is called by `tick()` (Rust side) at JS eval time;
+/// - `__sol_apply_state_patch` is called by `tick()` (Rust side) at JS eval time;
 ///   it is not registered as a global—the Rust code evaluates the call directly.
 pub(crate) fn install<'js>(ctx: Ctx<'js>, state: &StateHandle) -> JsResult<()> {
     let globals = ctx.globals();
 
     let state_mirror = state.clone();
     globals.set(
-        "__ox_state_set",
+        "__sol_state_set",
         Function::new(
             ctx.clone(),
             move |path: String, value_json: String| -> JsResult<()> {
@@ -29,8 +29,8 @@ pub(crate) fn install<'js>(ctx: Ctx<'js>, state: &StateHandle) -> JsResult<()> {
     let snapshot = serde_json::to_string(&state.snapshot()).unwrap_or_else(|_| "{}".into());
     let init_code = format!(
         r#"
-        if (typeof __ox_state !== 'undefined' && typeof __ox_state.__init === 'function') {{
-            __ox_state.__init({snapshot});
+        if (typeof __sol_state !== 'undefined' && typeof __sol_state.__init === 'function') {{
+            __sol_state.__init({snapshot});
         }}
         "#,
     );
@@ -44,7 +44,7 @@ pub(crate) fn install<'js>(ctx: Ctx<'js>, state: &StateHandle) -> JsResult<()> {
 
 /// Emit a JS call to apply a Rust-side state patch.
 ///
-/// Evaluates `__ox_apply_state_patch(path, json_value)` in the given context.
+/// Evaluates `__sol_apply_state_patch(path, json_value)` in the given context.
 pub(crate) fn apply_patch<'js>(
     ctx: Ctx<'js>,
     path: &str,
@@ -52,8 +52,8 @@ pub(crate) fn apply_patch<'js>(
 ) -> JsResult<()> {
     let json = serde_json::to_string(value).unwrap_or_else(|_| "null".into());
     let code = format!(
-        r#"if (typeof __ox_apply_state_patch === 'function') {{
-            __ox_apply_state_patch({path:?}, {json});
+        r#"if (typeof __sol_apply_state_patch === 'function') {{
+            __sol_apply_state_patch({path:?}, {json});
         }}"#,
     );
     let _: rquickjs::Value = ctx

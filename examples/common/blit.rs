@@ -59,7 +59,7 @@ pub struct BlitDraw {
 impl BlitContext {
     pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("oxide-dom blit bgl"),
+            label: Some("solite blit bgl"),
             entries: &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
@@ -81,18 +81,18 @@ impl BlitContext {
         });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("oxide-dom blit pipeline layout"),
+            label: Some("solite blit pipeline layout"),
             bind_group_layouts: &[Some(&bind_group_layout)],
             immediate_size: 0,
         });
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("oxide-dom blit shader"),
+            label: Some("solite blit shader"),
             source: wgpu::ShaderSource::Wgsl(BLIT_SHADER.into()),
         });
 
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("oxide-dom blit pipeline"),
+            label: Some("solite blit pipeline"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
@@ -147,12 +147,12 @@ impl BlitContext {
 
         let output_view = target.create_view(&wgpu::TextureViewDescriptor::default());
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("oxide-dom blit encoder"),
+            label: Some("solite blit encoder"),
         });
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("oxide-dom blit pass"),
+                label: Some("solite blit pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &output_view,
                     depth_slice: None,
@@ -171,7 +171,7 @@ impl BlitContext {
             pass.set_pipeline(&self.pipeline);
             for draw in draws {
                 let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("oxide-dom blit bind group"),
+                    label: Some("solite blit bind group"),
                     layout: &self.bind_group_layout,
                     entries: &[
                         wgpu::BindGroupEntry {

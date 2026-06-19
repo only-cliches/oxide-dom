@@ -214,7 +214,16 @@ impl DocumentMutator<'_> {
     }
 
     pub fn set_attribute(&mut self, node_id: usize, name: QualName, value: &str) {
-        self.doc.snapshot_node(node_id);
+        // Only snapshot if the element has already been styled. Snapshotting an
+        // unstyled element (primary = None) causes stylo's invalidation traversal
+        // to call `is_display_none()` → `primary()` → panic during the first pass.
+        if self.doc.nodes[node_id]
+            .stylo_element_data
+            .primary_styles()
+            .is_some()
+        {
+            self.doc.snapshot_node(node_id);
+        }
 
         let node = &mut self.doc.nodes[node_id];
         if let Some(mut data) = node.stylo_element_data.get_mut() {
@@ -301,7 +310,13 @@ impl DocumentMutator<'_> {
     }
 
     pub fn clear_attribute(&mut self, node_id: usize, name: QualName) {
-        self.doc.snapshot_node(node_id);
+        if self.doc.nodes[node_id]
+            .stylo_element_data
+            .primary_styles()
+            .is_some()
+        {
+            self.doc.snapshot_node(node_id);
+        }
 
         let node = &mut self.doc.nodes[node_id];
 
@@ -678,6 +693,13 @@ impl<'doc> DocumentMutator<'doc> {
             // This prevents stale active_node_id references.
             if doc.active_node_id == Some(node_id) {
                 doc.active_node_id = None;
+            }
+
+            // Clear focus state if this node was focused. Otherwise a later
+            // `clear_focus()` would call `snapshot_node()` on a removed slab
+            // entry and panic.
+            if doc.focus_node_id == Some(node_id) {
+                doc.focus_node_id = None;
             }
 
             // Remove any snapshot for this node to prevent stale snapshot references

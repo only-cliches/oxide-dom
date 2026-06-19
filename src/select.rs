@@ -4,11 +4,18 @@
 //! held by [`Instance`]. Rust owns the options list, selected index, and open state;
 //! JS handlers receive `input` and `change` events with `event.value` populated.
 //!
-//! v1 scope: single-select dropdown (no multiple, no size, no optgroup, no typeahead).
+//! v1 scope: single-select dropdown (no multiple, no size, no optgroup).
+//! Type-ahead, Alt+Down to open, Alt+Up to close, and PageUp/PageDown step
+//! are supported.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::time::{Duration, Instant};
+
+/// Maximum gap between type-ahead keystrokes before the buffer resets. Matches
+/// common browser behavior (~500ms).
+const TYPE_AHEAD_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// CSS classes used on the DOM nodes that make up an open select popup.
 /// Style rules for these live in [`POPUP_UA_CSS`].
@@ -95,6 +102,11 @@ pub struct SelectState {
     /// hidden (no div mounted) but still occupies its slot so
     /// `selected_index` stays valid and form submission keeps seeing it.
     pub option_node_ids: Vec<Option<usize>>,
+    /// Buffer of characters typed in rapid succession for type-ahead
+    /// option search. Reset when [`TYPE_AHEAD_TIMEOUT`] elapses between
+    /// keystrokes.
+    type_ahead_buffer: String,
+    type_ahead_last_at: Option<Instant>,
 }
 
 impl SelectState {
@@ -210,6 +222,110 @@ impl SelectState {
         } else {
             false
         }
+    }
+
+    /// Step the selection by `delta` positions, skipping disabled/hidden
+    /// options and clamping at the ends (no wrap, matching how browsers
+    /// handle PageUp/PageDown on a closed select).
+    pub fn step_selection(&mut self, delta: i32) -> bool {
+        if self.options.is_empty() {
+            return false;
+        }
+        let len = self.options.len() as i32;
+        let current = self.selected_index.unwrap_or(0) as i32;
+        let mut target = (current + delta).clamp(0, len - 1);
+        // Walk toward the original direction looking for an enabled slot.
+        let step = if delta >= 0 { 1 } else { -1 };
+        let mut attempts = 0;
+        while attempts < len && !Self::is_user_selectable_option(&self.options[target as usize]) {
+            target += step;
+            if target < 0 || target >= len {
+                // Bounce: reverse direction so a request to "go down 10"
+                // still lands on the last enabled option when the tail is
+                // disabled.
+                target = (current + delta).clamp(0, len - 1) - step;
+                while target >= 0
+                    && target < len
+                    && !Self::is_user_selectable_option(&self.options[target as usize])
+                {
+                    target -= step;
+                }
+                break;
+            }
+            attempts += 1;
+        }
+        if target < 0 || target >= len {
+            return false;
+        }
+        let target = target as usize;
+        if !Self::is_user_selectable_option(&self.options[target]) {
+            return false;
+        }
+        if self.selected_index == Some(target) {
+            return false;
+        }
+        self.selected_index = Some(target);
+        true
+    }
+
+    /// Push `ch` into the type-ahead buffer (resetting on timeout) and pick
+    /// the next matching option. Returns the chosen option's index, if any.
+    /// When the same single letter has been typed twice in succession we
+    /// "cycle": jump to the next option starting with that letter.
+    pub fn type_ahead(&mut self, ch: char, now: Instant) -> Option<usize> {
+        let timed_out = self
+            .type_ahead_last_at
+            .is_none_or(|prev| now.duration_since(prev) > TYPE_AHEAD_TIMEOUT);
+        if timed_out {
+            self.type_ahead_buffer.clear();
+        }
+        let lower = ch.to_lowercase().next().unwrap_or(ch);
+        self.type_ahead_buffer.push(lower);
+        self.type_ahead_last_at = Some(now);
+
+        let single_letter_cycle = self.type_ahead_buffer.chars().count() > 1
+            && self.type_ahead_buffer.chars().all(|c| c == lower);
+        // Reset the buffer to a single char when we're cycling so the same
+        // key keeps advancing.
+        if single_letter_cycle {
+            self.type_ahead_buffer.clear();
+            self.type_ahead_buffer.push(lower);
+        }
+
+        let prefix = self.type_ahead_buffer.clone();
+        let start_from = self.selected_index.map(|i| i + 1).unwrap_or(0);
+        let len = self.options.len();
+        if len == 0 {
+            return None;
+        }
+        // Two passes when cycling: from start_from to end, then 0..start_from.
+        // When NOT cycling (multi-letter prefix), search from the start so a
+        // longer prefix anchored at the same option stays consistent.
+        let scan = |start: usize, len: usize, options: &[SelectOption], prefix: &str| {
+            (start..len + start).find_map(|i| {
+                let idx = i % len;
+                let opt = &options[idx];
+                if !Self::is_user_selectable_option(opt) {
+                    return None;
+                }
+                let lower_label: String =
+                    opt.label.chars().flat_map(|c| c.to_lowercase()).collect();
+                lower_label.starts_with(prefix).then_some(idx)
+            })
+        };
+        let target = if single_letter_cycle {
+            scan(start_from, len, &self.options, &prefix)
+        } else if prefix.chars().count() == 1 {
+            scan(start_from, len, &self.options, &prefix)
+        } else {
+            scan(0, len, &self.options, &prefix)
+        };
+
+        if let Some(idx) = target {
+            self.selected_index = Some(idx);
+            self.active_index = Some(idx);
+        }
+        target
     }
 
     pub fn jump_to_extreme(&mut self, to_end: bool) -> bool {

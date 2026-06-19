@@ -10,66 +10,47 @@ mod capture;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use oxide_dom::{Instance, InstanceConfig, MouseButton, MouseEvent};
+use solite::{Instance, InstanceConfig, MouseButton, MouseEvent};
 
-// Hand-built via bridge primitives. We mirror what the kitchen_sink JSX
-// produces for `<select value={state.x} onChange={...}>`: an onChange
-// handler that writes state (triggering a reactive value re-set on the
-// select itself) so we can exercise the same path that panics under winit.
+// Mirror `kitchen_sink`'s JSX select pattern: an `onChange` handler that
+// writes global state and a controlled `value` binding so this example
+// exercises the same update path as reactive JSX-based `<select>` usage.
 const COMPONENT: &str = r#"
-import { createEffect, render } from "oxide-runtime";
+import { render } from "solite-runtime";
 
 function App() {
-  const panel = __ox_createElement("div");
-  __ox_setProperty(panel, "className", "panel");
-
-  const label = __ox_createElement("div");
-  __ox_setProperty(label, "className", "label");
-  __ox_insertNode(label, __ox_createTextNode("Pick one:"), null);
-  __ox_insertNode(panel, label, null);
-
-  const sel = __ox_createElement("select");
-  __ox_setProperty(sel, "className", "sel");
-  __ox_setProperty(sel, "onChange", (event) => {
-    globalThis.state.selectValue = event.value;
-  });
-
   function mkOpt(value, text, disabled) {
-    const opt = __ox_createElement("option");
-    __ox_setProperty(opt, "value", value);
-    if (disabled) __ox_setProperty(opt, "disabled", "");
-    __ox_insertNode(opt, __ox_createTextNode(text), null);
-    return opt;
+    return (
+      <option value={value} disabled={disabled}>
+        {text}
+      </option>
+    );
   }
 
-  // Leading sentinel: empty value, disabled, selected, hidden — the
-  // canonical placeholder pattern. The popup should NOT render this row
-  // but the closed display should read "Choose…" until the user picks.
-  function mkSentinel() {
-    const opt = __ox_createElement("option");
-    __ox_setProperty(opt, "value", "");
-    __ox_setProperty(opt, "disabled", "");
-    __ox_setProperty(opt, "selected", "");
-    __ox_setProperty(opt, "hidden", "");
-    __ox_insertNode(opt, __ox_createTextNode("Choose..."), null);
-    return opt;
-  }
-  __ox_insertNode(sel, mkSentinel(), null);
-  __ox_insertNode(sel, mkOpt("a", "Apple", false), null);
-  __ox_insertNode(sel, mkOpt("b", "Banana", false), null);
-  __ox_insertNode(sel, mkOpt("c", "Cherry", false), null);
-  __ox_insertNode(sel, mkOpt("d", "Date (disabled)", true), null);
-  __ox_insertNode(sel, mkOpt("e", "Elderberry", false), null);
-
-  // Reactive `value` mirroring globalThis.state.selectValue, matching what
-  // the JSX compiler emits for `value={globalThis.state.selectValue || ...}`.
-  createEffect(() => __ox_setProperty(sel, "value", globalThis.state.selectValue || "a"));
-
-  __ox_insertNode(panel, sel, null);
-  return panel;
+  return (
+    <div class="panel">
+      <div class="label">Pick one:</div>
+      <select
+        class="sel"
+        value={globalThis.state.selectValue || "a"}
+        onChange={(event) => {
+          globalThis.state.selectValue = event.value;
+        }}
+      >
+        <option value="" disabled selected hidden>
+          Choose...
+        </option>
+        {mkOpt("a", "Apple", false)}
+        {mkOpt("b", "Banana", false)}
+        {mkOpt("c", "Cherry", false)}
+        {mkOpt("d", "Date (disabled)", true)}
+        {mkOpt("e", "Elderberry", false)}
+      </select>
+    </div>
+  );
 }
 
-render(() => App(), __OX_ROOT__);
+render(() => <App />, __SOL_ROOT__);
 "#;
 
 const CSS: &str = r#"
@@ -113,7 +94,7 @@ async fn init_device() -> (Arc<wgpu::Device>, Arc<wgpu::Queue>) {
         .expect("no adapter");
     let (device, queue) = adapter
         .request_device(&wgpu::DeviceDescriptor {
-            label: Some("oxide-dom-select-popup-capture"),
+            label: Some("solite-select-popup-capture"),
             required_features: wgpu::Features::empty(),
             required_limits: wgpu::Limits::default(),
             experimental_features: wgpu::ExperimentalFeatures::disabled(),
@@ -126,8 +107,8 @@ async fn init_device() -> (Arc<wgpu::Device>, Arc<wgpu::Queue>) {
 }
 
 fn main() {
-    let output = args::capture_path_from_cli()
-        .unwrap_or_else(|| PathBuf::from("captures/select_popup.png"));
+    let output =
+        args::capture_path_from_cli().unwrap_or_else(|| PathBuf::from("captures/select_popup.png"));
 
     let (device, queue) = pollster::block_on(init_device());
     let (mut instance, _rx) = Instance::new(
@@ -138,23 +119,45 @@ fn main() {
             queue: queue.clone(),
             stylesheets: vec![CSS.to_string()],
             document_scroll: false,
+            base_url: None,
         },
         COMPONENT,
-    );
+    )
+    .expect("create instance");
 
     // Pump the JS once so all bridge calls (including the rebuild that
     // populates the select's options) flush before we force the popup open.
     let _ = instance.tick();
     let _ = instance.render();
 
-    let select_id = instance.select_node_ids().first().copied().expect("no <select> registered");
+    let select_id = instance
+        .select_node_ids()
+        .first()
+        .copied()
+        .expect("no <select> registered");
 
     // Open the select by clicking it (mirrors what handle_select_click does
     // via real pointer input). One frame of tick+render lays out the popup.
     let (sx, sy) = (50.0, 60.0);
     let _ = instance.dispatch_mouse(sx, sy, MouseEvent::Move { x: sx, y: sy });
-    let _ = instance.dispatch_mouse(sx, sy, MouseEvent::Down { x: sx, y: sy, button: MouseButton::Left });
-    let _ = instance.dispatch_mouse(sx, sy, MouseEvent::Up { x: sx, y: sy, button: MouseButton::Left });
+    let _ = instance.dispatch_mouse(
+        sx,
+        sy,
+        MouseEvent::Down {
+            x: sx,
+            y: sy,
+            button: MouseButton::Left,
+        },
+    );
+    let _ = instance.dispatch_mouse(
+        sx,
+        sy,
+        MouseEvent::Up {
+            x: sx,
+            y: sy,
+            button: MouseButton::Left,
+        },
+    );
     let _ = instance.tick();
     let _ = instance.render();
     let _ = select_id;
@@ -165,12 +168,9 @@ fn main() {
     let _ = instance.tick();
     let _ = instance.render();
 
-    if let Err(err) = capture::capture_texture_to_png(
-        &device,
-        &queue,
-        instance.texture(),
-        output.as_path(),
-    ) {
+    if let Err(err) =
+        capture::capture_texture_to_png(&device, &queue, instance.texture(), output.as_path())
+    {
         eprintln!("failed to capture frame: {err}");
         std::process::exit(1);
     }

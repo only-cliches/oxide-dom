@@ -33,14 +33,14 @@ pub fn capture_texture_to_png(
         .ok_or_else(|| "capture_texture_to_png: image too large".to_string())?;
 
     let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("oxide-dom capture staging"),
+        label: Some("solite capture staging"),
         size: bytes_per_image,
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
 
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        label: Some("oxide-dom capture encoder"),
+        label: Some("solite capture encoder"),
     });
     encoder.copy_texture_to_buffer(
         wgpu::TexelCopyTextureInfo {

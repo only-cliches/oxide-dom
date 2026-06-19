@@ -331,6 +331,202 @@ cwd = "$WORKSPACE"
 timeout_secs = 120
 approval_mode = "auto"
 
+[[hostdo.commands]]
+argv = ["pwd"]
+cwd = "$WORKSPACE"
+timeout_secs = 60
+approval_mode = "auto"
+
+[[hostdo.commands]]
+argv = [
+    "cargo",
+    "run",
+    "--example",
+    "images_capture",
+    "--features",
+    "jsx-compiler,with_system_fonts",
+    "--no-default-features",
+    "--",
+    "--capture",
+    "/tmp/solite-images.png",
+]
+cwd = "$WORKSPACE"
+timeout_secs = 600
+approval_mode = "auto"
+
+[[hostdo.commands]]
+argv = [
+    "cargo",
+    "run",
+    "--example",
+    "custom_font_capture",
+    "--features",
+    "jsx-compiler,with_system_fonts",
+    "--no-default-features",
+    "--",
+    "--capture",
+    "/tmp/solite-font.png",
+]
+cwd = "$WORKSPACE"
+timeout_secs = 600
+approval_mode = "auto"
+
+[[hostdo.commands]]
+argv = [
+    "cargo",
+    "run",
+    "--example",
+    "images_capture",
+    "--features",
+    "jsx-compiler,with_system_fonts",
+    "--no-default-features",
+    "--",
+    "--capture",
+    "target/captures/images.png",
+]
+cwd = "$WORKSPACE"
+timeout_secs = 60
+approval_mode = "auto"
+
+[[hostdo.commands]]
+argv = [
+    "cargo",
+    "run",
+    "--example",
+    "custom_font_capture",
+    "--features",
+    "jsx-compiler,with_system_fonts",
+    "--no-default-features",
+    "--",
+    "--capture",
+    "target/captures/custom_font.png",
+]
+cwd = "$WORKSPACE"
+timeout_secs = 60
+approval_mode = "auto"
+
+[[hostdo.commands]]
+argv = [
+    "cargo",
+    "test",
+    "--lib",
+    "--no-default-features",
+    "--features",
+    "jsx-compiler,with_system_fonts",
+]
+cwd = "$WORKSPACE"
+timeout_secs = 600
+approval_mode = "auto"
+
+[[hostdo.commands]]
+argv = [
+    "cargo",
+    "test",
+    "--lib",
+    "--features",
+    "jsx-compiler",
+    "--no-default-features",
+    "--",
+    "instance::tests::enter_on_focused_button_fires_click",
+    "instance::tests::select_alt_down_opens_dropdown",
+    "instance::tests::tabindex_negative_skips_element_from_tab_order",
+    "instance::tests::ctrl_left_via_dispatch_key_works_end_to_end",
+    "--test-threads",
+    "1",
+]
+cwd = "$WORKSPACE"
+timeout_secs = 300
+approval_mode = "auto"
+
+[[hostdo.commands]]
+argv = [
+    "cargo",
+    "build",
+    "--example",
+    "todo",
+]
+cwd = "$WORKSPACE"
+timeout_secs = 60
+approval_mode = "auto"
+
+[[hostdo.commands]]
+argv = [
+    "cargo",
+    "run",
+    "--example",
+    "todo",
+]
+cwd = "$WORKSPACE"
+timeout_secs = 60
+approval_mode = "auto"
+
+[[hostdo.commands]]
+argv = [
+    "env",
+    "RUST_BACKTRACE=1",
+    "cargo",
+    "run",
+    "--example",
+    "todo",
+]
+cwd = "$WORKSPACE"
+timeout_secs = 60
+approval_mode = "auto"
+
+[[hostdo.commands]]
+argv = [
+    "cargo",
+    "test",
+    "--lib",
+    "todo_example::full_user_flow_create_filter_toggle_clear",
+    "--",
+    "--nocapture",
+]
+cwd = "$WORKSPACE"
+timeout_secs = 300
+approval_mode = "auto"
+
+[[hostdo.commands]]
+argv = [
+    "cargo",
+    "test",
+    "--lib",
+    "js::bridge::tests::is_text_node_reports_node_kind",
+    "--",
+    "--nocapture",
+]
+cwd = "$WORKSPACE"
+timeout_secs = 300
+approval_mode = "auto"
+
+[[hostdo.commands]]
+argv = [
+    "cargo",
+    "test",
+    "--lib",
+    "js::bridge::tests::remove_node_detaches_without_reusing_id",
+    "js::bridge::tests::is_text_node_reports_node_kind",
+    "todo_example::full_user_flow_create_filter_toggle_clear",
+    "--",
+    "--nocapture",
+]
+cwd = "$WORKSPACE"
+timeout_secs = 300
+approval_mode = "auto"
+
+[[hostdo.commands]]
+argv = [
+    "cargo",
+    "test",
+    "--lib",
+    "js::bridge::tests",
+    "--",
+    "--nocapture",
+]
+cwd = "$WORKSPACE"
+timeout_secs = 300
+approval_mode = "auto"
+
 [network]
 allowlist = [
     "domain=github.com",
@@ -343,5 +539,6 @@ allowlist = [
     "domain=docs.rs",
     "domain=registry.npmjs.org",
     "domain=codeload.github.com",
+    "domain=sdmntprnorthcentralus.oaiusercontent.com",
 ]
 denylist = ["domain=http-intake.logs.us5.datadoghq.com"]

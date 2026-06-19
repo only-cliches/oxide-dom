@@ -11,21 +11,18 @@ mod capture;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use oxide_dom::{Instance, InstanceConfig};
+use solite::{Instance, InstanceConfig};
 
 // All visual styling lives in CSS, registered through `InstanceConfig.stylesheets`.
 // The component itself only chooses which `class` each element wears.
 const HELLO_COMPONENT: &str = r#"
-import { render } from "oxide-runtime";
+import { render } from "solite-runtime";
 
 function App() {
-  const wrapper = __ox_createElement("div");
-  __ox_setProperty(wrapper, "className", "hello");
-  __ox_insertNode(wrapper, __ox_createTextNode("Hello from Solid"), null);
-  return wrapper;
+  return <div class="hello">Hello from Solid</div>;
 }
 
-render(() => App(), __OX_ROOT__);
+render(() => App(), __SOL_ROOT__);
 "#;
 
 const HELLO_CSS: &str = r#"
@@ -58,7 +55,7 @@ async fn init_device() -> (Arc<wgpu::Device>, Arc<wgpu::Queue>) {
 
     let (device, queue) = adapter
         .request_device(&wgpu::DeviceDescriptor {
-            label: Some("oxide-dom-offscreen-capture"),
+            label: Some("solite-offscreen-capture"),
             required_features: wgpu::Features::empty(),
             required_limits: wgpu::Limits::default(),
             experimental_features: wgpu::ExperimentalFeatures::disabled(),
@@ -73,7 +70,7 @@ async fn init_device() -> (Arc<wgpu::Device>, Arc<wgpu::Queue>) {
 
 fn main() {
     let output = args::capture_path_from_cli()
-        .unwrap_or_else(|| PathBuf::from("/tmp/oxide-dom-headless-capture.png"));
+        .unwrap_or_else(|| PathBuf::from("/tmp/solite-headless-capture.png"));
 
     let (device, queue) = pollster::block_on(init_device());
     let (mut instance, _rx) = Instance::new(
@@ -84,9 +81,11 @@ fn main() {
             queue: queue.clone(),
             stylesheets: vec![HELLO_CSS.to_string()],
             document_scroll: false,
+            base_url: None,
         },
         HELLO_COMPONENT,
-    );
+    )
+    .expect("create instance");
 
     let _ = instance.tick();
     let _ = instance.render();

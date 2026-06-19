@@ -1,7 +1,7 @@
 use super::ElementCx;
 use crate::color::{Color, ToColorColor as _};
 use anyrender::PaintScene;
-use blitz_dom::{local_name, LocalName};
+use blitz_dom::{LocalName, local_name};
 use kurbo::{Affine, BezPath, Cap, Circle, Join, Point, Rect, RoundedRect, Stroke};
 use peniko::Fill;
 use style::dom::TElement as _;

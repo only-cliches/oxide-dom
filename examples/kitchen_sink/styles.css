@@ -1,0 +1,159 @@
+.panel {
+    display: block;
+    width: 360px;
+    padding: 10px;
+    font-size: 15px;
+    background: #182238;
+    color: #f0f4ff;
+    border: 1px solid #3a4f74;
+}
+.panel-title {
+    margin-bottom: 10px;
+    font: 700 16px/1.2 system-ui, sans-serif;
+}
+.toolbar {
+    margin-bottom: 10px;
+}
+
+/* Buttons — :hover swaps the background. No JS handlers required.
+   NOTE: `transition:` would register an animation set entry per node. The
+   current Blitz snapshot doesn't clear that entry when the node is removed
+   (see process_removed_subtree in blitz-dom/src/mutator.rs), so dynamic
+   subtrees that use transitions will panic in resolve_stylist on the next
+   restyle after a removal. Drop `transition:` until that's fixed upstream. */
+.btn {
+    display: inline-block;
+    padding: 8px 10px;
+    border-radius: 7px;
+    cursor: pointer;
+    color: #f3f7ff;
+}
+.btn-add {
+    margin-right: 8px;
+    border: 1px solid #7fb5ff;
+    background: #1f3b5f;
+}
+.btn-add:hover  { background: #5b8cfa; color: #ffffff; }
+.btn-add:active { background: #406fc9; }
+
+.btn-clear {
+    border: 1px solid #c28aff;
+    background: #3c225f;
+}
+.btn-clear:hover  { background: #7e45d8; color: #ffffff; }
+.btn-clear:active { background: #5d2fa3; }
+
+/* Text field — :focus drives the outline. */
+.field {
+    display: block;
+    width: 336px;
+    min-height: 1em;
+    padding: 4px;
+    margin-bottom: 10px;
+    font-family: monospace;
+    color: #ffffff;
+    background: #0f1723;
+    border: 1px solid #4f6282;
+    outline: 1px solid transparent;
+}
+.field:focus { outline: 2px solid #80b0ff; }
+
+.inline-fields {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 10px;
+    align-items: center;
+}
+
+/* text / number / password all share the same single-line appearance */
+.field-text,
+.field-number,
+.field-password {
+    width: 336px;
+}
+
+/* Select dropdown styling */
+select.field-select {
+    width: 336px;
+    cursor: pointer;
+}
+
+/* Range slider: strip away the box — the renderer paints its own
+   track + thumb using the CSS `color` as the accent. */
+.field-range {
+    width: 336px;
+    height: 28px;
+    min-height: 28px;
+    padding: 0 4px;
+    margin-bottom: 10px;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: #5b8cfa;
+    cursor: pointer;
+}
+
+/* Checkbox and radio: fixed square, accent colour drives the painted widget.
+   box-sizing keeps the rendered border-box at the declared size — without it
+   `padding` adds 6px to each axis and the radios become 28x28 rounded
+   rectangles instead of 22x22 squares. */
+input.field-checkbox,
+input.field-radio {
+    box-sizing: border-box;
+    width: 22px;
+    height: 22px;
+    min-height: 22px;
+    min-width: 22px;
+    padding: 3px;
+    margin: 0;
+    color: #5b8cfa;
+    cursor: pointer;
+    flex: 0 0 auto;
+}
+/* UA stylesheet sets a fixed 14px border-radius for radios, which is enough
+   for the 14px UA size but reads as a pill once we resize the box. Half the
+   box (11px) collapses the corners into a circle. */
+input.field-checkbox {
+    border-radius: 0;
+}
+input.field-radio {
+    border-radius: 11px;
+}
+
+/* Scrollable row list — alternating stripes + per-row :hover.
+   `overflow-y: auto` rather than `overflow: auto`: taffy's block layout
+   gives each `.row` (display:block, width:auto, padding) an outer width
+   of `parent_content + padding` instead of consuming padding from the
+   parent's content width, which would otherwise show up as a ~20px
+   horizontal scroll inside `.rows`. */
+.rows {
+    display: block;
+    width: 352px;
+    height: 190px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    border: 1px solid #4f6282;
+    background: #0f1420;
+}
+.row {
+    display: block;
+    padding: 7px 10px;
+    font: 12px/1.35 monospace;
+    color: #cfdaef;
+    border-bottom: 1px solid #25314a;
+    outline: 1px solid transparent;
+}
+.row-even { background: #141b2b; }
+.row-odd  { background: #101725; }
+.row:hover {
+    background: #224e6f;
+    color: #ffffff;
+    outline: 1px solid #7dd3fc;
+}
+
+.status {
+    margin-top: 8px;
+    font-size: 11px;
+    font-family: monospace;
+    color: #b7c3e0;
+}

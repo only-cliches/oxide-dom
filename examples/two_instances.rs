@@ -17,7 +17,7 @@ mod blit;
 mod capture;
 use blit::{BlitContext, BlitDraw};
 
-use oxide_dom::{Instance, InstanceConfig};
+use solite::{Instance, InstanceConfig};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, KeyEvent, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
@@ -25,25 +25,19 @@ use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
 
 const COMP_A: &str = r#"
-import { render } from "oxide-runtime";
+import { render } from "solite-runtime";
 function App() {
-  const d = __ox_createElement("div");
-  __ox_setProperty(d, "className", "panel panel-blue");
-  __ox_insertNode(d, __ox_createTextNode("Instance A"), null);
-  return d;
+  return <div class="panel panel-blue">Instance A</div>;
 }
-render(() => App(), __OX_ROOT__);
+render(() => App(), __SOL_ROOT__);
 "#;
 
 const COMP_B: &str = r#"
-import { render } from "oxide-runtime";
+import { render } from "solite-runtime";
 function App() {
-  const d = __ox_createElement("div");
-  __ox_setProperty(d, "className", "panel panel-purple");
-  __ox_insertNode(d, __ox_createTextNode("Instance B"), null);
-  return d;
+  return <div class="panel panel-purple">Instance B</div>;
 }
-render(() => App(), __OX_ROOT__);
+render(() => App(), __SOL_ROOT__);
 "#;
 
 // Shared stylesheet — same string handed to both instances so they pick up
@@ -81,7 +75,7 @@ struct Gpu {
 impl ApplicationHandler for TwoApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let attrs = Window::default_attributes()
-            .with_title("oxide-dom: two instances")
+            .with_title("solite: two instances")
             .with_inner_size(winit::dpi::LogicalSize::new(400u32, 200u32));
         let window = Arc::new(event_loop.create_window(attrs).expect("window"));
         let gpu = pollster::block_on(init_gpu(window.clone()));
@@ -96,9 +90,11 @@ impl ApplicationHandler for TwoApp {
                 queue: gpu.queue.clone(),
                 stylesheets: vec![SHARED_CSS.to_string()],
                 document_scroll: false,
+                base_url: None,
             },
             COMP_A,
-        );
+        )
+        .expect("create first instance");
         let (b, _rx_b) = Instance::new(
             InstanceConfig {
                 width: 200,
@@ -107,9 +103,11 @@ impl ApplicationHandler for TwoApp {
                 queue: gpu.queue.clone(),
                 stylesheets: vec![SHARED_CSS.to_string()],
                 document_scroll: false,
+                base_url: None,
             },
             COMP_B,
-        );
+        )
+        .expect("create second instance");
 
         self.window = Some(window);
         self.gpu = Some(gpu);
@@ -285,7 +283,7 @@ async fn init_gpu(window: Arc<Window>) -> Gpu {
         .expect("adapter");
     let (device, queue) = adapter
         .request_device(&wgpu::DeviceDescriptor {
-            label: Some("oxide-dom-two"),
+            label: Some("solite-two"),
             required_features: wgpu::Features::empty(),
             required_limits: wgpu::Limits::default(),
             experimental_features: wgpu::ExperimentalFeatures::disabled(),

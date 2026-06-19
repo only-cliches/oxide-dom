@@ -1,0 +1,270 @@
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 32px 16px;
+  min-height: 100vh;
+  background: linear-gradient(160deg, #6a82fb 0%, #fc5c7d 100%);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: #1f2540;
+}
+
+.page {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 8px;
+}
+
+.card {
+  width: 100%;
+  max-width: 460px;
+  background: #ffffff;
+  border-radius: 18px;
+  padding: 28px 28px 22px 28px;
+  box-shadow: 0 30px 60px rgba(20, 24, 60, 0.28);
+}
+
+.hero {
+  margin-bottom: 22px;
+}
+
+h1 {
+  margin: 0;
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  color: #1f2540;
+}
+
+.subtitle {
+  margin: 4px 0 0 0;
+  font-size: 14px;
+  color: #6b7191;
+}
+
+/* Input row */
+.input-group {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+.todo-input {
+  flex: 1;
+  padding: 12px 14px;
+  border: 1px solid #e2e4f0;
+  border-radius: 10px;
+  font-size: 15px;
+  background: #f7f8fc;
+  color: #1f2540;
+  font-family: inherit;
+  outline: none;
+}
+
+.todo-input:hover {
+  background: #f1f3fa;
+}
+
+.todo-input:focus {
+  background: #ffffff;
+  border-color: #6a82fb;
+  outline: 2px solid rgba(106, 130, 251, 0.25);
+}
+
+.todo-input::placeholder {
+  color: #9ca0b8;
+}
+
+.add-btn {
+  padding: 12px 20px;
+  border: none;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #6a82fb 0%, #fc5c7d 100%);
+  color: white;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  letter-spacing: 0.2px;
+}
+
+.add-btn:hover {
+  filter: brightness(1.05);
+}
+
+.add-btn:active {
+  filter: brightness(0.95);
+}
+
+/* Filter chips */
+.filter-bar {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid #e2e4f0;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #4b5170;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.chip:hover {
+  background: #f4f6ff;
+}
+
+.chip.active {
+  background: #1f2540;
+  color: #ffffff;
+  border-color: #1f2540;
+}
+
+.chip-count {
+  display: inline-block;
+  min-width: 18px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(31, 37, 64, 0.08);
+  color: #4b5170;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.chip.active .chip-count {
+  background: rgba(255, 255, 255, 0.2);
+  color: #ffffff;
+}
+
+/* List */
+.todo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+  min-height: 80px;
+}
+
+.empty-state {
+  text-align: center;
+  color: #9ca0b8;
+  padding: 28px 12px;
+  font-size: 14px;
+  background: #f7f8fc;
+  border: 1px dashed #e2e4f0;
+  border-radius: 12px;
+}
+
+.todo-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  background: #ffffff;
+  border: 1px solid #ecedf6;
+  border-radius: 12px;
+}
+
+.todo-item:hover {
+  border-color: #d6d9ec;
+  background: #fbfbff;
+}
+
+.todo-item.done {
+  background: #f4f5fb;
+  border-color: #ecedf6;
+}
+
+.todo-item.done .todo-text {
+  text-decoration: line-through;
+  color: #9ca0b8;
+}
+
+.todo-check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  cursor: pointer;
+}
+
+.todo-checkbox {
+  width: 20px;
+  height: 20px;
+  cursor: pointer;
+  accent-color: #6a82fb;
+  flex-shrink: 0;
+}
+
+.todo-text {
+  flex: 1;
+  color: #1f2540;
+  font-size: 15px;
+  word-break: break-word;
+}
+
+.delete-btn {
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: #9ca0b8;
+  cursor: pointer;
+  font-size: 20px;
+  line-height: 1;
+  flex-shrink: 0;
+  font-family: inherit;
+  font-weight: 700;
+}
+
+.delete-btn:hover {
+  background: #fee5ec;
+  color: #fc5c7d;
+}
+
+/* Footer */
+.footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 14px;
+  border-top: 1px solid #ecedf6;
+  font-size: 13px;
+  color: #6b7191;
+}
+
+.footer-status {
+  font-weight: 500;
+}
+
+.clear-btn {
+  padding: 6px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: #6b7191;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+}
+
+.clear-btn:hover {
+  background: #f4f6ff;
+  color: #1f2540;
+}
+
+.clear-btn.hidden {
+  visibility: hidden;
+}

@@ -1,5 +1,11 @@
-// M1 example: 200×200 hello-world via Solid + Blitz.
-// No JSX — the component uses bridge globals directly.
+// Demonstrates runtime custom-font registration.
+//
+// Loads the Mozilla "bullet" OTF — a tiny (~5 KB) font bundled with blitz —
+// and registers it under the family name "SoliteBullet". The rendered text
+// uses CSS `font-family: 'SoliteBullet'` so all glyphs render from the
+// registered file. The font has very few code points (mostly bullets and a
+// box character `\u{2610}` we use here), but that's enough to demonstrate
+// the registration round-trip without depending on system fonts.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -12,40 +18,39 @@ mod blit;
 mod capture;
 
 use blit::{BlitContext, BlitDraw};
-use solite::{Instance, InstanceConfig};
+use solite::{FontFormat, Instance, InstanceConfig};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::window::{Window, WindowId};
 
-// Styling lives in CSS. The component just attaches a class name; the rule
-// matches and Blitz computes the look. Click anywhere in the window to see
-// the `:active` pseudo-class swap the background.
-const HELLO_COMPONENT: &str = r#"
+/// The Mozilla bullet font shipped with blitz. The path is fixed in this
+/// repo so we can include the bytes at compile time.
+const BULLET_FONT_BYTES: &[u8] =
+    include_bytes!("../vendor/blitz/packages/blitz-dom/assets/moz-bullet-font.otf");
+
+const COMPONENT: &str = r#"
 import { render } from "solite-runtime";
 
 function App() {
-  return <div class="hello">Hello from Solid</div>;
+  return (
+    <div class="root">
+      <p class="label">Glyphs from a host-registered font:</p>
+      <p class="custom">• ‣ ◦ ■ ☐</p>
+    </div>
+  );
 }
 
 render(() => App(), __SOL_ROOT__);
 "#;
 
-const HELLO_CSS: &str = r#"
-.hello {
-    width: 100%;
-    height: 100%;
-    background: #008000;
-    color: #ffffff;
-    padding: 12px;
-    font-size: 24px;
-    font-family: system-ui, sans-serif;
-}
-.hello:hover  { background: #006400; }
-.hello:active { background: #003c00; }
+const CSS: &str = r#"
+.root { padding: 16px; background: #fafafa; }
+.label { font-family: system-ui, sans-serif; font-size: 14px; color: #333; }
+.custom { font-family: 'SoliteBullet'; font-size: 48px; color: #222; letter-spacing: 8px; }
 "#;
 
-struct App {
+struct AppState {
     window: Option<Arc<Window>>,
     instance: Option<Instance>,
     gpu: Option<Gpu>,
@@ -61,54 +66,56 @@ struct Gpu {
     blit: BlitContext,
 }
 
-impl ApplicationHandler for App {
+impl ApplicationHandler for AppState {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let attrs = Window::default_attributes()
-            .with_title("solite")
-            .with_inner_size(winit::dpi::LogicalSize::new(200u32, 200u32));
+            .with_title("solite — custom font")
+            .with_inner_size(winit::dpi::LogicalSize::new(480u32, 200u32));
         let window = Arc::new(event_loop.create_window(attrs).expect("window"));
-
         let gpu = pollster::block_on(init_gpu(window.clone()));
 
-        let (instance, _events) = Instance::new(
+        let (mut instance, _events) = Instance::new(
             InstanceConfig {
-                width: 200,
+                width: 480,
                 height: 200,
                 device: gpu.device.clone(),
                 queue: gpu.queue.clone(),
-                stylesheets: vec![HELLO_CSS.to_string()],
+                stylesheets: vec![CSS.to_string()],
                 document_scroll: false,
                 base_url: None,
             },
-            HELLO_COMPONENT,
+            COMPONENT,
         )
         .expect("create instance");
 
-        self.window = Some(window);
+        // Register the font AFTER the instance is mounted. The synthetic
+        // @font-face rule + NetProvider fetch resolve synchronously, and
+        // the next `resolve()` (called from `render()`) reflows any text
+        // that should now match it.
+        let _id = instance.register_font_bytes(
+            "SoliteBullet",
+            BULLET_FONT_BYTES.to_vec(),
+            FontFormat::Opentype,
+        );
+
+        self.window = Some(window.clone());
         self.gpu = Some(gpu);
         self.instance = Some(instance);
-
-        if let Some(window) = &self.window {
-            window.request_redraw();
-        }
+        window.request_redraw();
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::RedrawRequested => {
-                let capture_path = self.capture_path.take();
                 let (Some(instance), Some(gpu)) = (self.instance.as_mut(), self.gpu.as_ref())
                 else {
-                    if let Some(path) = capture_path {
-                        self.capture_path = Some(path);
-                    }
                     return;
                 };
-
                 let tick = instance.tick();
                 if tick.needs_paint {
                     let view = instance.render().clone();
+                    let capture_path = self.capture_path.take();
                     if let Some(path) = capture_path {
                         match capture::capture_texture_to_png(
                             &gpu.device,
@@ -126,13 +133,19 @@ impl ApplicationHandler for App {
                             }
                         }
                     }
-                    let need_redraw = present_to_surface(
+                    let need_redraw = blit::present_to_surface(
                         &gpu.device,
                         &gpu.queue,
                         &gpu.surface,
                         &gpu.config,
                         &gpu.blit,
-                        &view,
+                        &[BlitDraw {
+                            view,
+                            x: 0,
+                            y: 0,
+                            width: gpu.config.width,
+                            height: gpu.config.height,
+                        }],
                     );
                     if need_redraw {
                         if let Some(window) = &self.window {
@@ -171,7 +184,6 @@ async fn init_gpu(window: Arc<Window>) -> Gpu {
         ..wgpu::InstanceDescriptor::new_without_display_handle()
     });
     let surface = instance.create_surface(window.clone()).expect("surface");
-
     let adapter = instance
         .request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::None,
@@ -180,10 +192,9 @@ async fn init_gpu(window: Arc<Window>) -> Gpu {
         })
         .await
         .expect("adapter");
-
     let (device, queue) = adapter
         .request_device(&wgpu::DeviceDescriptor {
-            label: Some("solite-device"),
+            label: Some("solite-custom-font-device"),
             required_features: wgpu::Features::empty(),
             required_limits: wgpu::Limits::default(),
             experimental_features: wgpu::ExperimentalFeatures::disabled(),
@@ -192,7 +203,6 @@ async fn init_gpu(window: Arc<Window>) -> Gpu {
         })
         .await
         .expect("device");
-
     let size = window.inner_size();
     let caps = surface.get_capabilities(&adapter);
     let format = caps
@@ -205,10 +215,9 @@ async fn init_gpu(window: Arc<Window>) -> Gpu {
         .alpha_modes
         .iter()
         .copied()
-        .find(|mode| *mode == wgpu::CompositeAlphaMode::Opaque)
+        .find(|m| *m == wgpu::CompositeAlphaMode::Opaque)
         .or_else(|| caps.alpha_modes.first().copied())
         .unwrap_or(wgpu::CompositeAlphaMode::Opaque);
-
     let config = wgpu::SurfaceConfiguration {
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
         format,
@@ -221,7 +230,6 @@ async fn init_gpu(window: Arc<Window>) -> Gpu {
     };
     surface.configure(&device, &config);
     let blit = BlitContext::new(&device, config.format);
-
     Gpu {
         device: Arc::new(device),
         queue: Arc::new(queue),
@@ -233,7 +241,7 @@ async fn init_gpu(window: Arc<Window>) -> Gpu {
 
 fn main() {
     let event_loop = EventLoop::new().expect("event loop");
-    let mut app = App {
+    let mut app = AppState {
         window: None,
         instance: None,
         gpu: None,
@@ -241,28 +249,4 @@ fn main() {
         capture_done: false,
     };
     event_loop.run_app(&mut app).expect("run");
-}
-
-fn present_to_surface(
-    device: &Arc<wgpu::Device>,
-    queue: &Arc<wgpu::Queue>,
-    surface: &wgpu::Surface<'static>,
-    config: &wgpu::SurfaceConfiguration,
-    blit: &BlitContext,
-    view: &wgpu::TextureView,
-) -> bool {
-    blit::present_to_surface(
-        device,
-        queue,
-        surface,
-        config,
-        blit,
-        &[BlitDraw {
-            view: view.clone(),
-            x: 0,
-            y: 0,
-            width: config.width,
-            height: config.height,
-        }],
-    )
 }

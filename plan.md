@@ -1,4 +1,4 @@
-# oxide-dom — Plan
+# solite — Plan
 
 A reactive UI library in Rust. HTML/CSS rendered by Blitz (Vello/wgpu), driven by SolidJS running on QuickJS. Each `Instance` paints into a GPU texture with transparency so the host can composite freely.
 
@@ -27,7 +27,7 @@ A reactive UI library in Rust. HTML/CSS rendered by Blitz (Vello/wgpu), driven b
               │   mouse    │                │
               ▼            │                │
 ┌────────────────────────────────────────────────────────┐
-│ oxide-dom::Instance                                    │
+│ solite::Instance                                    │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
 │  │ JS context   │  │ Blitz        │  │ Renderer     │  │
 │  │ (rquickjs)   │──│ Document     │──│ (Vello→wgpu  │  │
@@ -65,7 +65,7 @@ The library is **passive**. It owns no thread, no async runtime, no internal sch
 
 One method, called by the host once per frame (or on a wake signal). In order:
 
-1. Drain host→JS state patches (any `StateHandle::set` calls since last tick) and apply via `__ox_apply_state_patch` → Solid `setStore`.
+1. Drain host→JS state patches (any `StateHandle::set` calls since last tick) and apply via `__sol_apply_state_patch` → Solid `setStore`.
 2. Pump QuickJS pending jobs (Promise resolutions, queued microtasks) up to a budget — default 256 jobs per tick, configurable, so a runaway JS loop can't wedge the frame.
 3. If anything mutated the Blitz document during 1 or 2, set an internal `needs_paint` flag.
 4. Return `TickResult { needs_paint: bool, jobs_pending: bool }` so the host knows whether to call `render()` and whether to call `tick()` again soon.
@@ -120,7 +120,7 @@ This keeps the library renderer-thread-agnostic: any host with a way to call two
 ## Crate layout
 
 ```
-oxide-dom/
+solite/
 ├── Cargo.toml
 ├── plan.md
 ├── src/
@@ -130,8 +130,8 @@ oxide-dom/
 │   ├── js/
 │   │   ├── mod.rs       # rquickjs context, Solid bundle loader
 │   │   ├── bridge.rs    # universal renderer ops (createElement, etc.)
-│   │   ├── state.rs     # __ox_state_set / __ox_apply_state_patch glue
-│   │   └── outbox.rs    # __ox_send_event → mpsc::UnboundedSender
+│   │   ├── state.rs     # __sol_state_set / __sol_apply_state_patch glue
+│   │   └── outbox.rs    # __sol_send_event → mpsc::UnboundedSender
 │   ├── state.rs         # StateHandle (Clone + Send + Sync)
 │   └── events.rs        # MouseEvent input + Event output type
 ├── js/
@@ -198,13 +198,13 @@ impl Instance {
 
 **State sync — path-based patches:**
 - Initial mount: Rust serializes state snapshot → JS wraps in `createStore`.
-- JS write (`state.counter = 5`) → Solid store setter → `__ox_state_set("counter", 5)` → Rust mirror updates synchronously, no flag set (avoids feedback loop).
+- JS write (`state.counter = 5`) → Solid store setter → `__sol_state_set("counter", 5)` → Rust mirror updates synchronously, no flag set (avoids feedback loop).
 - Rust write (`handle.set("counter", json!(5))`) → mutex update + dirty flag set.
-- `instance.tick()`: drains pending Rust-side patches, calls JS `__ox_apply_state_patch(path, value)` → `setStore(path, value)` → Solid re-renders affected nodes.
+- `instance.tick()`: drains pending Rust-side patches, calls JS `__sol_apply_state_patch(path, value)` → `setStore(path, value)` → Solid re-renders affected nodes.
 - Paths use dot notation; arrays use numeric indices (matches Solid `setStore` semantics).
 
 **Events:**
-- `sendEvent(name, payload)` JS global → `__ox_send_event(name, payload_json)` → `UnboundedSender::send(Event { name, payload })`.
+- `sendEvent(name, payload)` JS global → `__sol_send_event(name, payload_json)` → `UnboundedSender::send(Event { name, payload })`.
 - Unbounded for M2. Backpressure (bounded channel + `try_send` with logged drop) is a follow-up if real workloads need it.
 - Channel is per-Instance. Receiver is returned from `Instance::new` so the type system forces the host to handle it (or `drop` explicitly).
 

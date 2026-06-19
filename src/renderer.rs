@@ -98,9 +98,9 @@ impl Painter {
         let (upload_buffer, bytes_per_row) = if padded_row_bytes == row_bytes {
             (self.cpu_buffer.as_slice(), row_bytes)
         } else {
-            let required_len = padded_row_bytes
-                .checked_mul(self.height as usize)
-                .expect("padded upload buffer too large");
+            let Some(required_len) = padded_row_bytes.checked_mul(self.height as usize) else {
+                return;
+            };
             self.padded_buffer.resize(required_len, 0);
             self.padded_buffer.fill(0);
             for y in 0..self.height as usize {

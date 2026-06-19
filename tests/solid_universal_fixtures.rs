@@ -44,7 +44,7 @@ fn solid_universal_fixtures_match_babel_goldens() {
         let source = std::fs::read_to_string(&path).expect("read fixture source");
         let expected = std::fs::read_to_string(&expected_path).expect("read Babel golden output");
         let compile_path = path.with_extension("jsx");
-        let actual = oxide_dom::compile_component_source(&compile_path, &source)
+        let actual = solite::compile_component_source(&compile_path, &source)
             .unwrap_or_else(|err| panic!("{name} failed to compile: {err}"));
 
         let expected = canonicalize_for_parity(&expected_path, &expected);
@@ -67,7 +67,7 @@ fn solid_universal_fixtures_compile_to_plain_js() {
         let path = root.join(name).join("code.js");
         let source = std::fs::read_to_string(&path).expect("read fixture source");
         let compile_path = path.with_extension("jsx");
-        let actual = oxide_dom::compile_component_source(&compile_path, &source)
+        let actual = solite::compile_component_source(&compile_path, &source)
             .unwrap_or_else(|err| panic!("{name} failed to compile: {err}"));
         canonicalize_for_parity(&compile_path, &actual);
     }
@@ -83,7 +83,7 @@ fn normalize_allowed_integration_differences(source: &str) -> String {
     for line in source.lines() {
         let trimmed = line.trim();
         if trimmed.starts_with("import {")
-            && (trimmed.contains("from \"r-custom\"") || trimmed.contains("from \"oxide-runtime\""))
+            && (trimmed.contains("from \"r-custom\"") || trimmed.contains("from \"solite-runtime\""))
         {
             continue;
         }
@@ -93,7 +93,7 @@ fn normalize_allowed_integration_differences(source: &str) -> String {
 
     for helper in SOLID_HELPERS {
         output = output.replace(&format!("_${helper}"), &format!("__solid_{helper}"));
-        output = output.replace(&format!("_ox_{helper}"), &format!("__solid_{helper}"));
+        output = output.replace(&format!("_sol_{helper}"), &format!("__solid_{helper}"));
     }
 
     normalize_generated_identifiers(&output)
@@ -135,7 +135,7 @@ fn generated_identifier_mapping(mappings: &mut Vec<(String, String)>, raw: &str)
         return normalized.clone();
     }
 
-    let prefix = if raw == "_$p" || raw == "_ox_p" || raw == "_p$" {
+    let prefix = if raw == "_$p" || raw == "_sol_p" || raw == "_p$" {
         "__tmp_prev"
     } else {
         "__tmp"
@@ -152,7 +152,7 @@ fn read_generated_identifier(source: &str) -> Option<&str> {
             return Some(&source[..prefix.len() + digits]);
         }
     }
-    for exact in ["_$p", "_ox_p", "_p$"] {
+    for exact in ["_$p", "_sol_p", "_p$"] {
         if source.starts_with(exact) {
             return Some(&source[..exact.len()]);
         }
