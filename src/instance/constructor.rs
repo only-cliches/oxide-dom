@@ -57,6 +57,7 @@ impl Instance {
             document_scroll,
             base_url: base_url_config,
             initial_state,
+            registered_resources,
         } = config;
 
         // --- Document ---
@@ -73,6 +74,9 @@ impl Instance {
 
         // --- Resource provider (images, fonts) ---
         let net_provider = Arc::new(SoliteNetProvider::new());
+        for (url, bytes) in registered_resources {
+            net_provider.register(url, bytes);
+        }
         let base_url_str = base_url_config.unwrap_or_else(net::default_base_url);
         let base_url = Rc::new(RefCell::new(parse_base_url(&base_url_str)?));
         {
@@ -233,6 +237,7 @@ impl Instance {
             document_scroll,
             base_url: base_url_config,
             initial_state,
+            registered_resources,
         } = config;
 
         // --- Document ---
@@ -249,6 +254,9 @@ impl Instance {
 
         // --- Resource provider (images, fonts) ---
         let net_provider = Arc::new(SoliteNetProvider::new());
+        for (url, bytes) in registered_resources {
+            net_provider.register(url, bytes);
+        }
         // When loading from a file, default the base URL to the file's parent
         // directory so sibling images/fonts referenced relatively (`<img
         // src="logo.png">` next to the component) resolve correctly.
@@ -451,6 +459,7 @@ impl Instance {
             document_scroll,
             base_url: base_url_config,
             initial_state,
+            registered_resources,
         } = config;
 
         // --- Document ---
@@ -467,6 +476,9 @@ impl Instance {
 
         // --- Resource provider (images, fonts) ---
         let net_provider = Arc::new(SoliteNetProvider::new());
+        for (url, bytes) in registered_resources {
+            net_provider.register(url, bytes);
+        }
         let base_url_str = base_url_config.unwrap_or_else(net::default_base_url);
         let base_url = Rc::new(RefCell::new(parse_base_url(&base_url_str)?));
         {

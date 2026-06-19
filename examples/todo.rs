@@ -80,6 +80,7 @@ impl ApplicationHandler for App {
                 document_scroll: true,
                 base_url: None,
                 initial_state: None,
+            registered_resources: vec![],
             },
             &todo_js,
         )

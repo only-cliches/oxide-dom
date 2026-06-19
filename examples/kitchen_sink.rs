@@ -657,12 +657,12 @@ fn mount_targets(
                     "radioB": false,
                     "password": "",
                 })),
+                registered_resources: vec![(BIRDS_URL.to_string(), birds_bytes.to_vec())],
             },
             &bundle_source,
         )
         .expect("create instance");
         let mut instance = instance;
-        instance.register_image_bytes(BIRDS_URL, birds_bytes.to_vec());
         let stylesheet_id = stylesheets
             .first()
             .map(|stylesheet| instance.add_stylesheet(stylesheet));

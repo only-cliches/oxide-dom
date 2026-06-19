@@ -147,6 +147,9 @@ impl ApplicationHandler for AppState {
         let component_source = format!("{preamble}\n{COMPONENT}");
         let component = compile_image_component_source(&component_source);
 
+        // Register in-memory PNGs before mount so the fetch triggered during
+        // component construction finds them. The broken URL is intentionally
+        // omitted so the img element triggers its onError handler.
         let (instance, events) = Instance::new(
             InstanceConfig {
                 width: 400,
@@ -157,16 +160,15 @@ impl ApplicationHandler for AppState {
                 document_scroll: false,
                 base_url: None,
                 initial_state: None,
+                registered_resources: vec![
+                    (VALID_URL.to_string(), self.valid_png.clone()),
+                    (RED_URL.to_string(), self.red_png.clone()),
+                    (BLUE_URL.to_string(), self.blue_png.clone()),
+                ],
             },
             &component,
         )
         .expect("create instance");
-
-        // Register in-memory PNGs. The broken URL is intentionally omitted so
-        // the img element triggers its onError handler.
-        instance.register_image_bytes(VALID_URL, self.valid_png.clone());
-        instance.register_image_bytes(RED_URL, self.red_png.clone());
-        instance.register_image_bytes(BLUE_URL, self.blue_png.clone());
 
         self.window = Some(window.clone());
         self.gpu = Some(gpu);

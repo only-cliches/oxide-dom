@@ -234,6 +234,7 @@ fn dispatch_mouse_click_updates_rust_state() {
             document_scroll: false,
             base_url: None,
             initial_state: None,
+            registered_resources: vec![],
         },
         ROOT_CLICK_COMPONENT,
     );
@@ -280,6 +281,7 @@ fn take_send_event_error_clears_after_read() {
             document_scroll: false,
             base_url: None,
             initial_state: None,
+            registered_resources: vec![],
         },
         r#"
             import { render } from "solite-runtime";
@@ -337,6 +339,7 @@ fn dispatch_key_down_and_up_target_focused_node() {
             document_scroll: false,
             base_url: None,
             initial_state: None,
+            registered_resources: vec![],
         },
         TEXT_INPUT_COMPONENT,
     );
@@ -411,6 +414,7 @@ fn dispatch_focus_events_update_host_state() {
             document_scroll: false,
             base_url: None,
             initial_state: None,
+            registered_resources: vec![],
         },
         TEXT_INPUT_COMPONENT,
     );
@@ -459,6 +463,7 @@ fn resize_updates_size_and_keeps_click_working() {
             document_scroll: false,
             base_url: None,
             initial_state: None,
+            registered_resources: vec![],
         },
         CLICK_BUTTON_COMPONENT,
     );
@@ -509,6 +514,7 @@ fn dispatch_mouse_move_updates_hover_state_and_handlers() {
             document_scroll: false,
             base_url: None,
             initial_state: None,
+            registered_resources: vec![],
         },
         HOVER_COMPONENT,
     );
@@ -594,6 +600,7 @@ fn dispatch_wheel_scrolls_and_dispatches_events() {
             document_scroll: false,
             base_url: None,
             initial_state: None,
+            registered_resources: vec![],
         },
         WHEEL_SCROLL_COMPONENT,
     );
@@ -666,6 +673,7 @@ fn two_instances_share_device_and_keep_state_independent() {
             document_scroll: false,
             base_url: None,
             initial_state: None,
+            registered_resources: vec![],
         },
         ROOT_CLICK_COMPONENT,
     );
@@ -679,6 +687,7 @@ fn two_instances_share_device_and_keep_state_independent() {
             document_scroll: false,
             base_url: None,
             initial_state: None,
+            registered_resources: vec![],
         },
         CLICK_BUTTON_COMPONENT,
     );
@@ -778,6 +787,7 @@ fn reactive_text_child_keeps_same_node_across_renders() {
             document_scroll: false,
             base_url: None,
             initial_state: None,
+            registered_resources: vec![],
         },
         STABLE_TEXT_COMPONENT,
     );
@@ -850,6 +860,7 @@ fn click_triggers_reactive_list_update() {
             document_scroll: false,
             base_url: None,
             initial_state: None,
+            registered_resources: vec![],
         },
         REACTIVE_LIST_COMPONENT,
     );
@@ -938,6 +949,7 @@ fn dispatch_wheel_with_reactive_effect_does_not_panic_on_doc_borrow() {
             document_scroll: false,
             base_url: None,
             initial_state: None,
+            registered_resources: vec![],
         },
         REACTIVE_WHEEL_COMPONENT,
     );
@@ -997,6 +1009,7 @@ fn make_instance_with(
             document_scroll: false,
             base_url: None,
             initial_state: None,
+            registered_resources: vec![],
         },
         component,
     )
@@ -1710,6 +1723,7 @@ fn document_scroll_scrolls_root_container() {
             document_scroll: true,
             base_url: None,
             initial_state: None,
+            registered_resources: vec![],
         },
         TALL_COMPONENT,
     );
@@ -1772,6 +1786,7 @@ fn horizontal_overflow_emits_horizontal_scrollbar() {
             document_scroll: false,
             base_url: None,
             initial_state: None,
+            registered_resources: vec![],
         },
         WIDE_COMPONENT,
     );
@@ -1866,6 +1881,7 @@ fn three_scene_surfaces_keep_horizontal_scrollbar_visible() {
                 document_scroll: false,
                 base_url: None,
                 initial_state: None,
+            registered_resources: vec![],
             },
             &seeded_source,
         );
@@ -1994,6 +2010,7 @@ fn scrollbar_tracks_are_local_to_each_scene_surface() {
             document_scroll: false,
             base_url: None,
             initial_state: None,
+            registered_resources: vec![],
         },
         SCROLL_COMPONENT,
     );
@@ -2007,6 +2024,7 @@ fn scrollbar_tracks_are_local_to_each_scene_surface() {
             document_scroll: false,
             base_url: None,
             initial_state: None,
+            registered_resources: vec![],
         },
         SCROLL_COMPONENT,
     );
@@ -2142,6 +2160,7 @@ fn horizontal_scrollbar_tracks_are_local_to_each_scene_surface() {
             document_scroll: false,
             base_url: None,
             initial_state: None,
+            registered_resources: vec![],
         },
         SCROLL_COMPONENT,
     );
@@ -2155,6 +2174,7 @@ fn horizontal_scrollbar_tracks_are_local_to_each_scene_surface() {
             document_scroll: false,
             base_url: None,
             initial_state: None,
+            registered_resources: vec![],
         },
         SCROLL_COMPONENT,
     );
@@ -2283,6 +2303,7 @@ fn horizontal_overflow_emits_without_vertical_scroll() {
             document_scroll: false,
             base_url: None,
             initial_state: None,
+            registered_resources: vec![],
         },
         WIDE_COMPONENT,
     );
@@ -2345,6 +2366,7 @@ fn inline_overflow_emits_horizontal_scrollbar() {
             document_scroll: false,
             base_url: None,
             initial_state: None,
+            registered_resources: vec![],
         },
         WIDE_COMPONENT,
     );
@@ -2396,6 +2418,7 @@ fn no_horizontal_scrollbar_for_vertical_only_overflow() {
             document_scroll: false,
             base_url: None,
             initial_state: None,
+            registered_resources: vec![],
         },
         TALL_WIDE_COMPONENT,
     );
@@ -2447,6 +2470,7 @@ fn flex_inline_overflow_emits_horizontal_scrollbar() {
             document_scroll: false,
             base_url: None,
             initial_state: None,
+            registered_resources: vec![],
         },
         FLEX_COMPONENT,
     );
@@ -2503,6 +2527,7 @@ fn document_scroll_with_inner_scroll_still_scrolls() {
             document_scroll: true,
             base_url: None,
             initial_state: None,
+            registered_resources: vec![],
         },
         PANEL_COMPONENT,
     );
@@ -2563,6 +2588,7 @@ fn document_scroll_emits_scrollbar_region() {
             document_scroll: true,
             base_url: None,
             initial_state: None,
+            registered_resources: vec![],
         },
         TALL_COMPONENT,
     );
@@ -3890,6 +3916,7 @@ fn run_img_test(src_url: &str) -> Vec<Event> {
             document_scroll: false,
             base_url: None,
             initial_state: None,
+            registered_resources: vec![],
         },
         &component,
     );
@@ -3971,6 +3998,7 @@ fn dynamic_src_mutation_fires_load_for_each_new_url() {
             document_scroll: false,
             base_url: None,
             initial_state: None,
+            registered_resources: vec![],
         },
         &component,
     );
@@ -4049,6 +4077,7 @@ fn register_font_bytes_returns_distinct_stylesheet_ids() {
             document_scroll: false,
             base_url: None,
             initial_state: None,
+            registered_resources: vec![],
         },
         FONT_COMPONENT,
     );
@@ -4078,6 +4107,7 @@ fn register_font_bytes_does_not_panic_during_render() {
             document_scroll: false,
             base_url: None,
             initial_state: None,
+            registered_resources: vec![],
         },
         FONT_COMPONENT,
     );
@@ -4107,6 +4137,7 @@ fn register_font_from_path_reads_file() {
             document_scroll: false,
             base_url: None,
             initial_state: None,
+            registered_resources: vec![],
         },
         FONT_COMPONENT,
     );
@@ -4131,6 +4162,7 @@ fn register_font_from_path_rejects_unknown_extension() {
             document_scroll: false,
             base_url: None,
             initial_state: None,
+            registered_resources: vec![],
         },
         "import { render } from \"solite-runtime\"; render(() => __sol_createElement(\"div\"), __SOL_ROOT__);",
     );
@@ -4241,6 +4273,7 @@ fn make_kb_nav_instance() -> (Instance, tokio::sync::mpsc::UnboundedReceiver<Eve
             document_scroll: false,
             base_url: None,
             initial_state: None,
+            registered_resources: vec![],
         },
         KB_NAV_COMPONENT,
     );
@@ -4510,6 +4543,7 @@ fn make_state_mutation_canary() -> (Instance, StateHandle) {
             document_scroll: false,
             base_url: None,
             initial_state: None,
+            registered_resources: vec![],
         },
         CANARY_MUTATION_COMPONENT,
     );
@@ -4797,6 +4831,7 @@ fn automatic_tab_order_walks_all_default_focusables_in_doc_order() {
             document_scroll: false,
             base_url: None,
             initial_state: None,
+            registered_resources: vec![],
         },
         component,
     );
@@ -4860,6 +4895,7 @@ fn anchor_without_href_is_not_in_automatic_tab_order() {
             document_scroll: false,
             base_url: None,
             initial_state: None,
+            registered_resources: vec![],
         },
         component,
     );
@@ -4904,6 +4940,7 @@ fn disabled_default_focusable_is_skipped_by_automatic_tab_order() {
             document_scroll: false,
             base_url: None,
             initial_state: None,
+            registered_resources: vec![],
         },
         component,
     );
@@ -4951,6 +4988,7 @@ fn tabindex_negative_skips_element_from_tab_order() {
             document_scroll: false,
             base_url: None,
             initial_state: None,
+            registered_resources: vec![],
         },
         component,
     );
@@ -4998,6 +5036,7 @@ fn positive_tabindex_takes_priority_over_doc_order() {
             document_scroll: false,
             base_url: None,
             initial_state: None,
+            registered_resources: vec![],
         },
         component,
     );
@@ -5123,6 +5162,7 @@ fn ctrl_left_via_dispatch_key_works_end_to_end() {
             document_scroll: false,
             base_url: None,
             initial_state: None,
+            registered_resources: vec![],
         },
         component,
     );
@@ -5203,6 +5243,7 @@ fn make_select_nav_instance() -> Instance {
             document_scroll: false,
             base_url: None,
             initial_state: None,
+            registered_resources: vec![],
         },
         SELECT_NAV_COMPONENT,
     );
@@ -5502,6 +5543,7 @@ mod todo_example {
                 document_scroll: true,
                 base_url: None,
                 initial_state: None,
+            registered_resources: vec![],
             },
             &compiled,
         );
@@ -5548,6 +5590,7 @@ mod todo_example {
                 document_scroll: true,
                 base_url: None,
                 initial_state: None,
+            registered_resources: vec![],
             },
             &compiled,
         );
@@ -5664,6 +5707,7 @@ mod todo_example {
                 document_scroll: true,
                 base_url: None,
                 initial_state: None,
+            registered_resources: vec![],
             },
             &compiled,
         );

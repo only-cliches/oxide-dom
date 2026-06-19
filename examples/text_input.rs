@@ -139,6 +139,7 @@ impl ApplicationHandler for App {
                     .capture_path
                     .as_ref()
                     .map(|_| json!({ "value": "hello world" })),
+                registered_resources: vec![],
             },
             &component,
         )

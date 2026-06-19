@@ -47,6 +47,14 @@ pub struct InstanceConfig {
     /// reads in component render paths are reliable for AOT bundles and
     /// non-string-rewritable mounts.
     pub initial_state: Option<serde_json::Value>,
+    /// Resources registered in the net provider before the component mounts.
+    /// Each entry is a `(url, bytes)` pair served from memory when an `<img
+    /// src="…">` or CSS `url(…)` references that URL. Use any custom scheme
+    /// (e.g. `"solite-image://my-icon"`) to avoid conflicts with `file://`,
+    /// `data:`, or `http(s)://`. Must be provided here — not via
+    /// [`Instance::register_image_bytes`] — because image fetches are triggered
+    /// synchronously during component mount.
+    pub registered_resources: Vec<(String, Vec<u8>)>,
 }
 
 /// Opaque identifier for a stylesheet registered via

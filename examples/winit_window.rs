@@ -76,6 +76,7 @@ impl ApplicationHandler for App {
                 document_scroll: false,
                 base_url: None,
                 initial_state: None,
+            registered_resources: vec![],
             },
             &component,
         )
