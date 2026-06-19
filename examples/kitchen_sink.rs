@@ -13,7 +13,8 @@ use serde_json::json;
 use solite::compile_component_file;
 use solite::winit::{WinitBridge, WinitPollScheduler};
 use solite::{
-    Instance, InstanceConfig, Scene, SourceChangeSummary, StylesheetId, SurfaceRect, TickResult,
+    Event, FileWatch, Instance, InstanceConfig, Scene, SourceChangeSummary, StylesheetId,
+    SurfaceRect, TickResult,
     capture::{build_capture_path, capture_texture_to_png},
     gpu::{BlitContext, BlitDraw, present_to_surface},
 };
