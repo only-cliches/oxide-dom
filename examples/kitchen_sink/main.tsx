@@ -138,6 +138,8 @@ function App() {
         }}
       />
 
+      <img class="bird-img" src="solite-image://birds" />
+
       <select
         class="field field-select"
         value={globalThis.state.selectValue ?? ""}

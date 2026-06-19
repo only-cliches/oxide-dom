@@ -151,6 +151,15 @@ input.field-radio {
     outline: 1px solid #7dd3fc;
 }
 
+.bird-img {
+    display: block;
+    width: 344px;
+    height: 120px;
+    object-fit: cover;
+    margin-bottom: 10px;
+    border: 1px solid #3a4f74;
+}
+
 .status {
     margin-top: 8px;
     font-size: 11px;

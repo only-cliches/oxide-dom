@@ -25,6 +25,7 @@ use winit::window::{Window, WindowId};
 
 const PROJECT_NAME: &str = "solite-kitchen-sink";
 const TARGET_LABELS: [&str; 3] = ["Left Target", "Center Target", "Right Target"];
+const BIRDS_URL: &str = "solite-image://birds";
 // Kitchen-sink assets now live in a source directory so this example is
 // editable as normal TSX/CSS without embedding large inline strings.
 const KITCHEN_SINK_DIR: &str = "examples/kitchen_sink";
@@ -37,6 +38,7 @@ struct DemoProject {
     source_dir: PathBuf,
     source_file: PathBuf,
     dist_file: PathBuf,
+    birds_bytes: Vec<u8>,
 }
 
 struct RenderTargetData {
@@ -213,6 +215,7 @@ impl App {
                 height,
                 &gpu.device,
                 &gpu.queue,
+                &project.birds_bytes,
             ) {
                 Ok(mut scene) => {
                     for surface in scene.surfaces_mut() {
@@ -290,6 +293,7 @@ impl ApplicationHandler for App {
             height,
             &gpu.device,
             &gpu.queue,
+            &project.birds_bytes,
         ) {
             Ok(scene) => scene,
             Err(err) => {
@@ -584,12 +588,15 @@ fn create_demo_project() -> io::Result<DemoProject> {
     let root = std::env::temp_dir().join(format!("{PROJECT_NAME}-{nanos}"));
     create_dir_all(root.join("dist"))?;
 
+    let birds_bytes = std::fs::read(manifest_dir.join("examples/birds.jpg"))?;
+
     Ok(DemoProject {
         stylesheet,
         stylesheet_path: stylesheet_path.clone(),
         source_dir,
         source_file,
         dist_file: root.join("dist/App.js"),
+        birds_bytes,
     })
 }
 
@@ -619,6 +626,7 @@ fn mount_targets(
     height: u32,
     device: &Arc<wgpu::Device>,
     queue: &Arc<wgpu::Queue>,
+    birds_bytes: &[u8],
 ) -> io::Result<Scene<RenderTargetData>> {
     let mut scene = Scene::new();
 
@@ -653,6 +661,7 @@ fn mount_targets(
         )
         .expect("create instance");
         let mut instance = instance;
+        instance.register_image_bytes(BIRDS_URL, birds_bytes.to_vec());
         let stylesheet_id = stylesheets
             .first()
             .map(|stylesheet| instance.add_stylesheet(stylesheet));
