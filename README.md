@@ -2,11 +2,14 @@
 
 # solite
 
-**A UI library for games: native on every screen:**
+**A UI library for games. native on every screen:**
 
 **📱 iOS · iPadOS · Android &nbsp;·&nbsp; 🖥️ Windows · macOS · Linux**
 
 </div>
+
+![Solite Demo](./demo.gif)
+
 
 ---
 
