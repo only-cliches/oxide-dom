@@ -20,7 +20,6 @@
     height: 9px;
     border-radius: 999px;
     background: rgba(120, 220, 200, 0.10);
-    box-shadow: inset 0 0 0 1px rgba(140, 230, 210, 0.14);
     overflow: hidden;
 }
 
@@ -33,12 +32,10 @@
 
 .bar-fill.right {
     background: linear-gradient(90deg, #3fd6a6, #8af7c8);
-    box-shadow: 0 0 10px rgba(90, 240, 190, 0.65);
 }
 
 .bar-fill.left {
     background: linear-gradient(90deg, #ffb35c, #ff7a59);
-    box-shadow: 0 0 10px rgba(255, 150, 90, 0.6);
 }
 
 .bar-value {

@@ -527,6 +527,32 @@ cwd = "$WORKSPACE"
 timeout_secs = 300
 approval_mode = "auto"
 
+[[hostdo.commands]]
+argv = [
+    "cargo",
+    "run",
+    "-p",
+    "solite-drive-game",
+    "--release",
+]
+cwd = "$WORKSPACE"
+timeout_secs = 60
+approval_mode = "auto"
+
+[[hostdo.commands]]
+argv = [
+    "env",
+    "SOLITE_HUD_HZ=20",
+    "cargo",
+    "run",
+    "-p",
+    "solite-drive-game",
+    "--release",
+]
+cwd = "$WORKSPACE"
+timeout_secs = 60
+approval_mode = "auto"
+
 [network]
 allowlist = [
     "domain=github.com",

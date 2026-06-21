@@ -1,4 +1,6 @@
-use rquickjs::{Ctx, Function, Result as JsResult};
+use rquickjs::{Ctx, Result as JsResult};
+#[cfg(debug_assertions)]
+use rquickjs::Function;
 
 /// Install `__sol_dev_warn(message)` — a stderr diagnostic channel the runtime
 /// uses to flag likely developer mistakes (e.g. a function passed to a reactive

@@ -102,7 +102,7 @@ function App() {
   // card-space, matching .slider-track (top: 74, height: 170 in styles.css).
   const HANDLE_H = 14;
   const handleStyle = () => ({
-    top: 74 + (1 - sliderFrac()) * 170 - HANDLE_H / 2 + "px",
+    top: 84 + (1 - sliderFrac()) * 170 - HANDLE_H / 2 + "px",
   });
 
   // Drag handling. Pressing the slider starts a drag and mounts a full-screen

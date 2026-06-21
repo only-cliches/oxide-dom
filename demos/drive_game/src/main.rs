@@ -8,7 +8,7 @@ use std::time::Instant;
 use game::{CarState, InputState};
 use hud::Hud;
 use renderer::GameRenderer;
-use solite::gpu::{BlitContext, WindowGpu};
+use solite::gpu::{BlitContext, BlitDraw, WindowGpu};
 use solite::winit::WinitBridge;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, WindowEvent};
@@ -29,6 +29,13 @@ struct App {
     fps: f32,
     frame_ms: f32,
     occluded: bool,
+    // HUD refresh throttling: the car scene renders at the full display rate,
+    // but the telemetry HUD — whose per-frame Vello re-render dominates CPU
+    // cost — only repaints `hud_refresh_hz` times/second, reusing the last
+    // painted texture in between.
+    hud_refresh_hz: f32,
+    hud_accum_secs: f32,
+    hud_draw_cache: Option<BlitDraw>,
 }
 
 impl Default for App {
@@ -46,6 +53,16 @@ impl Default for App {
             fps: 0.0,
             frame_ms: 0.0,
             occluded: false,
+            // 30Hz: the per-frame Vello HUD re-render is the dominant CPU cost,
+            // and the telemetry overlay doesn't need 60Hz. Tunable via
+            // SOLITE_HUD_HZ (lower = cheaper but choppier HUD; the car scene
+            // always runs at the full display rate regardless).
+            hud_refresh_hz: std::env::var("SOLITE_HUD_HZ")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(30.0),
+            hud_accum_secs: 0.0,
+            hud_draw_cache: None,
         }
     }
 }
@@ -67,6 +84,8 @@ impl App {
             let (logical_width, logical_height) = self.bridge.to_logical_size(width, height);
             hud.resize(logical_width, logical_height, self.bridge.scale_factor());
         }
+        // The HUD texture was reallocated; force a repaint next frame.
+        self.hud_draw_cache = None;
     }
 
     fn handle_keyboard(&mut self, event_loop: &ActiveEventLoop, event: &winit::event::KeyEvent) {
@@ -115,13 +134,27 @@ impl App {
         // (a one-frame lag), which is standard for an on-screen frame timer.
         let work_start = Instant::now();
 
+        // Slider input + hot-reload are cheap and stay responsive every frame.
         let _ = hud.maybe_reload(self.car);
         hud.poll_events();
         self.car.update(self.input, dt, hud.max_speed_mps());
 
-        hud.update_state(self.car, self.fps, self.frame_ms);
-        hud.tick();
-        let hud_draw = hud.draw();
+        // Repaint the HUD at most `hud_refresh_hz` times/second; reuse the last
+        // painted texture in between. The first frame always paints.
+        self.hud_accum_secs += dt;
+        let hud_interval = 1.0 / self.hud_refresh_hz;
+        let refresh_hud = self.hud_draw_cache.is_none() || self.hud_accum_secs >= hud_interval;
+
+        let hud_draw = if refresh_hud {
+            self.hud_accum_secs = 0.0;
+            hud.update_state(self.car, self.fps, self.frame_ms);
+            hud.tick();
+            let draw = hud.draw();
+            self.hud_draw_cache = Some(draw.clone());
+            draw
+        } else {
+            self.hud_draw_cache.clone().expect("hud cache present")
+        };
         let cpu_pre = work_start.elapsed();
 
         let frame = match gpu.surface.get_current_texture() {

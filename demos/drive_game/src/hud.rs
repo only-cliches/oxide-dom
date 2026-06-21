@@ -5,9 +5,10 @@ use serde_json::json;
 use solite::gpu::BlitDraw;
 use solite::winit::WinitEventTarget;
 use solite::workflow::{ReloadAction, SourceProject, SourceProjectWatch};
-use solite::{
-    Event, Instance, InstanceConfig, KeyboardEvent, MouseEvent, TickResult, VirtualSourceFile,
-};
+use solite::{Event, Instance, InstanceConfig, KeyboardEvent, MouseEvent, TickResult};
+// Only the debug build compiles `compile_ui_modules`, which produces these.
+#[cfg(debug_assertions)]
+use solite::VirtualSourceFile;
 use tokio::sync::mpsc;
 
 use crate::game::CarState;

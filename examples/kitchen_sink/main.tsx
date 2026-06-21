@@ -1,5 +1,4 @@
 import { render } from "solite-runtime";
-import "./styles.css";
 
 function App() {
   const targetLabel = globalThis.state.targetLabel || "Pane";
