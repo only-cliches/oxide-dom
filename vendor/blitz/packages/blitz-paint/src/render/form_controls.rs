@@ -93,6 +93,7 @@ impl ElementCx<'_, '_> {
                     self.frame.content_box,
                     self.transform,
                     accent_color,
+                    self.scale,
                 );
             }
             _ => {}
@@ -164,12 +165,15 @@ fn draw_range_slider(
     content_box: Rect,
     transform: Affine,
     accent_color: Color,
+    scale: f64,
 ) {
     const TRACK_COLOR: Color = Color::from_rgba8(79, 98, 130, 255);
 
     let cy = (content_box.y0 + content_box.y1) / 2.0;
-    let thumb_r = (content_box.height() / 2.0).min(8.0).max(3.0);
-    let track_h = (thumb_r * 0.45).max(2.0);
+    // content_box is in physical pixels; caps must scale with DPI so the thumb
+    // keeps the same apparent CSS-pixel size at any device pixel ratio.
+    let thumb_r = (content_box.height() / 2.0).min(8.0 * scale).max(3.0 * scale);
+    let track_h = (thumb_r * 0.45).max(2.0 * scale);
 
     // Clamp track horizontally so the thumb never extends outside content_box.
     let x0 = content_box.x0 + thumb_r;

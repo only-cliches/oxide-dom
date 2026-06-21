@@ -285,6 +285,27 @@ impl InputState {
         self.value.parse::<f64>().ok()
     }
 
+    /// Configured `min` attribute, if any. Exposed for the accessibility tree
+    /// (slider/number `aria-valuemin`).
+    pub fn min(&self) -> Option<f64> {
+        self.min
+    }
+
+    /// Configured `max` attribute, if any (`aria-valuemax`).
+    pub fn max(&self) -> Option<f64> {
+        self.max
+    }
+
+    /// Effective step (`aria-valuestep`); defaults to 1.0 when unset.
+    pub fn step(&self) -> f64 {
+        self.step_value()
+    }
+
+    /// Placeholder text, if set. Exposed for the accessibility tree.
+    pub fn placeholder(&self) -> Option<&str> {
+        self.placeholder.as_deref()
+    }
+
     fn step_value(&self) -> f64 {
         self.step.unwrap_or(1.0)
     }

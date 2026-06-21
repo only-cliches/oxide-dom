@@ -1,0 +1,4 @@
+fn main() {
+    solite_build::workflow::bundle_for_cargo("ui", "ui_bundle.rs")
+        .expect("bundle solite UI");
+}

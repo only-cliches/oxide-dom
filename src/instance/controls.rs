@@ -775,12 +775,9 @@ impl Instance {
                 s.selection_end(),
             )
         })?;
-        Some(self.js.dispatch_input_event(
-            node_id,
-            &snapshot.0,
-            snapshot.1,
-            snapshot.2,
-            snapshot.3,
-        ))
+        Some(
+            self.js
+                .dispatch_input_event(node_id, &snapshot.0, snapshot.1, snapshot.2, snapshot.3),
+        )
     }
 }

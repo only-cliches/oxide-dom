@@ -8,16 +8,16 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-#[path = "common/args.rs"]
-mod args;
+#[path = "common/gpu.rs"]
+mod gpu;
 
-use solite::{
-    Instance, InstanceConfig,
-    capture::capture_texture_to_png,
-    gpu::{BlitContext, BlitDraw, present_to_surface},
-};
 #[cfg(feature = "jsx-compiler")]
 use solite::compile_component_source;
+use solite::{
+    Instance, InstanceConfig,
+    capture::{capture_path_from_cli, capture_texture_to_png},
+    gpu::{BlitDraw, present_to_surface},
+};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
@@ -120,13 +120,7 @@ struct AppState {
     blue_png: Vec<u8>,
 }
 
-struct Gpu {
-    device: Arc<wgpu::Device>,
-    queue: Arc<wgpu::Queue>,
-    surface: wgpu::Surface<'static>,
-    config: wgpu::SurfaceConfiguration,
-    blit: BlitContext,
-}
+type Gpu = gpu::Gpu;
 
 impl ApplicationHandler for AppState {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
@@ -135,7 +129,10 @@ impl ApplicationHandler for AppState {
             .with_inner_size(winit::dpi::LogicalSize::new(400u32, 200u32));
         let window = Arc::new(event_loop.create_window(attrs).expect("window"));
 
-        let gpu = pollster::block_on(init_gpu(window.clone()));
+        let gpu = pollster::block_on(gpu::init_gpu(window.clone(), "solite-images-device"));
+        // Let the bridge own the scale factor so pointer events and resizes are
+        // converted physical→logical in the library, not here.
+        self.bridge.set_scale_factor(window.scale_factor());
 
         // Bake the URL constants into JS globals before the component evals.
         let preamble = format!(
@@ -154,7 +151,9 @@ impl ApplicationHandler for AppState {
             InstanceConfig {
                 width: 400,
                 height: 200,
+                #[cfg(feature = "gpu")]
                 device: gpu.device.clone(),
+                #[cfg(feature = "gpu")]
                 queue: gpu.queue.clone(),
                 stylesheets: vec![CSS.to_string()],
                 document_scroll: false,
@@ -165,7 +164,7 @@ impl ApplicationHandler for AppState {
                     (RED_URL.to_string(), self.red_png.clone()),
                     (BLUE_URL.to_string(), self.blue_png.clone()),
                 ],
-                scale_factor: window.scale_factor(),
+                scale_factor: self.bridge.scale_factor(),
             },
             &component,
         )
@@ -246,11 +245,15 @@ impl ApplicationHandler for AppState {
                 }
             }
             WindowEvent::Resized(size) => {
+                if let Some(window) = self.window.as_ref() {
+                    self.bridge.set_scale_factor(window.scale_factor());
+                }
+                let (logical_w, logical_h) = self.bridge.to_logical_size(size.width, size.height);
                 if let (Some(instance), Some(gpu)) = (self.instance.as_mut(), self.gpu.as_mut()) {
                     gpu.config.width = size.width.max(1);
                     gpu.config.height = size.height.max(1);
                     gpu.surface.configure(&gpu.device, &gpu.config);
-                    instance.resize(gpu.config.width, gpu.config.height);
+                    instance.resize(logical_w, logical_h);
                     if let Some(w) = &self.window {
                         w.request_redraw();
                     }
@@ -299,68 +302,6 @@ impl ApplicationHandler for AppState {
     }
 }
 
-async fn init_gpu(window: Arc<Window>) -> Gpu {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::all(),
-        ..wgpu::InstanceDescriptor::new_without_display_handle()
-    });
-    let surface = instance.create_surface(window.clone()).expect("surface");
-    let adapter = instance
-        .request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::None,
-            compatible_surface: Some(&surface),
-            force_fallback_adapter: false,
-        })
-        .await
-        .expect("adapter");
-    let (device, queue) = adapter
-        .request_device(&wgpu::DeviceDescriptor {
-            label: Some("solite-images-device"),
-            required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::default(),
-            experimental_features: wgpu::ExperimentalFeatures::disabled(),
-            memory_hints: wgpu::MemoryHints::default(),
-            trace: wgpu::Trace::Off,
-        })
-        .await
-        .expect("device");
-
-    let size = window.inner_size();
-    let caps = surface.get_capabilities(&adapter);
-    let format = caps
-        .formats
-        .iter()
-        .copied()
-        .find(|f| f.is_srgb())
-        .unwrap_or(caps.formats[0]);
-    let alpha_mode = caps
-        .alpha_modes
-        .iter()
-        .copied()
-        .find(|m| *m == wgpu::CompositeAlphaMode::Opaque)
-        .or_else(|| caps.alpha_modes.first().copied())
-        .unwrap_or(wgpu::CompositeAlphaMode::Opaque);
-    let config = wgpu::SurfaceConfiguration {
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-        format,
-        width: size.width.max(1),
-        height: size.height.max(1),
-        present_mode: wgpu::PresentMode::AutoVsync,
-        alpha_mode,
-        view_formats: vec![],
-        desired_maximum_frame_latency: 2,
-    };
-    surface.configure(&device, &config);
-    let blit = BlitContext::new(&device, config.format);
-    Gpu {
-        device: Arc::new(device),
-        queue: Arc::new(queue),
-        surface,
-        config,
-        blit,
-    }
-}
-
 fn main() {
     let event_loop = EventLoop::new().expect("event loop");
     let mut app = AppState {
@@ -369,7 +310,7 @@ fn main() {
         bridge: solite::winit::WinitBridge::new(),
         events: None,
         gpu: None,
-        capture_path: args::capture_path_from_cli(),
+        capture_path: capture_path_from_cli(),
         capture_done: false,
         valid_png: synth_png_bytes([0x33, 0xaa, 0x33, 0xff]),
         red_png: synth_png_bytes([0xcc, 0x33, 0x33, 0xff]),

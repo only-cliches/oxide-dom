@@ -16,16 +16,18 @@ mod scrollbar;
 mod select;
 mod spinner;
 mod state;
+mod touch;
 #[cfg(feature = "winit")]
 mod winit_integration;
+pub mod workflow;
 
 // The JSX/TS compiler and AOT bundler live in the lightweight `solite-build`
 // crate (so it can be a build-dependency without pulling in the renderer). Their
 // public API is re-exported here, unchanged, for application code.
-pub use events::{Event, KeyboardEvent, MouseButton, MouseEvent};
+pub use events::{Event, KeyboardEvent, MouseButton, MouseEvent, TouchEvent, TouchPhase};
 pub use fonts::FontFormat;
 pub use instance::{
-    FileWatch, Instance, InstanceConfig, RegisterFontError, RegisterImageError,
+    FileWatch, Instance, InstanceConfig, InstanceError, RegisterFontError, RegisterImageError,
     SourceChangeSummary, StylesheetId,
 };
 pub use js::TickResult;
@@ -46,6 +48,15 @@ pub mod winit {
     pub use crate::winit_integration::{
         WinitBridge, WinitEventTarget, WinitForward, WinitPollScheduler, key_to_string,
     };
+
+    /// Accessibility integration (the `a11y` feature). [`A11yAdapter`] bridges
+    /// solite's accessibility tree to screen readers via `accesskit_winit`,
+    /// which is re-exported here so hosts can name its `Event`/`WindowEvent`
+    /// types without adding their own dependency.
+    #[cfg(feature = "a11y")]
+    pub use crate::winit_integration::A11yAdapter;
+    #[cfg(feature = "a11y")]
+    pub use accesskit_winit;
 }
 
 #[cfg(test)]

@@ -1,13 +1,11 @@
+use super::runtime::{char_index_to_byte_index, estimated_input_char_width};
 use super::*;
-use crate::{Event, FontFormat, KeyboardEvent, MouseButton, MouseEvent};
 use crate::scrollbar::ScrollAxis;
+use crate::{Event, FontFormat, KeyboardEvent, MouseButton, MouseEvent};
 use blitz_dom::LocalName;
 use parley::{Affinity, Cursor, Selection};
-use tokio::sync::mpsc::UnboundedReceiver;
-use super::runtime::{
-    char_index_to_byte_index, estimated_input_char_width,
-};
 use std::sync::Arc;
+use tokio::sync::mpsc::UnboundedReceiver;
 
 use serde_json::{Value, json};
 
@@ -1447,6 +1445,43 @@ fn kitchen_sink_button_hover_flips_color() {
     assert_eq!(after, Some((255, 255, 255)), "hover should flip color");
 }
 
+/// A function passed to a reactive attribute by reference (`style={fn}`
+/// instead of `style={fn()}`) compiles to a static `setProp`, so it is applied
+/// once and never updates — a silent footgun. In dev builds the runtime should
+/// surface a `__sol_dev_warn` diagnostic naming the attribute.
+#[cfg(all(feature = "jsx-compiler", debug_assertions))]
+#[test]
+fn uncalled_function_attribute_emits_dev_warning() {
+    const JSX: &str = r#"
+            import { render } from "solite-runtime";
+            function App() {
+              const styleFn = () => ({ width: "10px" });
+              return <div style={styleFn}></div>;
+            }
+            render(() => App(), __SOL_ROOT__);
+        "#;
+    let compiled =
+        solite_build::compile_component_source(std::path::Path::new("/tmp/warn.jsx"), JSX)
+            .expect("compile");
+    let (mut instance, _rx) = make_instance_with(&compiled, &[]);
+    let _ = instance.render();
+
+    let mut count = 0i32;
+    let mut mentions_style = false;
+    instance.js.context_with(|ctx| {
+        count = ctx
+            .eval::<i32, _>("(globalThis.__sol_dev_warnings || []).length")
+            .unwrap_or(0);
+        mentions_style = ctx
+            .eval::<bool, _>(
+                "(globalThis.__sol_dev_warnings || []).some(m => m.indexOf('style') >= 0)",
+            )
+            .unwrap_or(false);
+    });
+    assert!(count >= 1, "expected a dev warning for style={{fn}}, got {count}");
+    assert!(mentions_style, "warning should name the offending `style` attribute");
+}
+
 /// Regression: kitchen_sink panicked at blitz-dom/src/stylo.rs:84
 /// (`invalid key`) when the user clicked "Add Row" after a row had been
 /// styled with a `transition:` declaration. Cause: removed nodes leave
@@ -1896,8 +1931,8 @@ fn three_scene_surfaces_keep_horizontal_scrollbar_visible() {
                 document_scroll: false,
                 base_url: None,
                 initial_state: None,
-            registered_resources: vec![],
-            scale_factor: 1.0,
+                registered_resources: vec![],
+                scale_factor: 1.0,
             },
             &seeded_source,
         );
@@ -5584,8 +5619,8 @@ mod todo_example {
                 document_scroll: true,
                 base_url: None,
                 initial_state: None,
-            registered_resources: vec![],
-            scale_factor: 1.0,
+                registered_resources: vec![],
+                scale_factor: 1.0,
             },
             &compiled,
         );
@@ -5632,8 +5667,8 @@ mod todo_example {
                 document_scroll: true,
                 base_url: None,
                 initial_state: None,
-            registered_resources: vec![],
-            scale_factor: 1.0,
+                registered_resources: vec![],
+                scale_factor: 1.0,
             },
             &compiled,
         );
@@ -5750,8 +5785,8 @@ mod todo_example {
                 document_scroll: true,
                 base_url: None,
                 initial_state: None,
-            registered_resources: vec![],
-            scale_factor: 1.0,
+                registered_resources: vec![],
+                scale_factor: 1.0,
             },
             &compiled,
         );
@@ -5970,5 +6005,96 @@ mod todo_example {
                 .to_lowercase()
                 .contains("no completed")
         );
+    }
+
+    #[cfg(feature = "a11y")]
+    const A11Y_COMPONENT: &str = r#"
+        import { render } from "solite-runtime";
+        function App() {
+          const root = __sol_createElement("div");
+          __sol_setProperty(root, "style", "display:block; width:200px; height:200px;");
+
+          const cb = __sol_createElement("input");
+          __sol_setProperty(cb, "type", "checkbox");
+          __sol_setProperty(cb, "aria-label", "Accept terms");
+          __sol_insertNode(root, cb, null);
+
+          const range = __sol_createElement("input");
+          __sol_setProperty(range, "type", "range");
+          __sol_setProperty(range, "min", "0");
+          __sol_setProperty(range, "max", "10");
+          __sol_setProperty(range, "value", "5");
+          __sol_insertNode(root, range, null);
+
+          const btn = __sol_createElement("button");
+          __sol_insertNode(btn, __sol_createTextNode("Go"), null);
+          __sol_insertNode(root, btn, null);
+
+          return root;
+        }
+        render(() => App(), __SOL_ROOT__);
+    "#;
+
+    #[cfg(feature = "a11y")]
+    #[test]
+    fn accessibility_tree_reports_roles_states_and_drives_actions() {
+        use accesskit::{Action, Role, Toggled};
+
+        let (device, queue) = test_device();
+        let (mut instance, _rx) = Instance::new(
+            InstanceConfig {
+                width: 200,
+                height: 200,
+                device,
+                queue,
+                stylesheets: vec![],
+                document_scroll: false,
+                base_url: None,
+                initial_state: None,
+                registered_resources: vec![],
+                scale_factor: 1.0,
+            },
+            A11Y_COMPONENT,
+        );
+        let _ = instance.tick();
+        let _ = instance.render();
+
+        let tree = instance.accessibility_tree();
+        let by_role = |role: Role| {
+            tree.nodes
+                .iter()
+                .find(|(_, node)| node.role() == role)
+                .map(|(id, node)| (*id, node))
+        };
+
+        let (_cb_id, checkbox) = by_role(Role::CheckBox).expect("checkbox node");
+        assert_eq!(checkbox.toggled(), Some(Toggled::False));
+        assert_eq!(checkbox.label(), Some("Accept terms"));
+        assert!(checkbox.supports_action(Action::Click));
+
+        let (slider_id, slider) = by_role(Role::Slider).expect("slider node");
+        assert_eq!(slider.numeric_value(), Some(5.0));
+        assert_eq!(slider.min_numeric_value(), Some(0.0));
+        assert_eq!(slider.max_numeric_value(), Some(10.0));
+        assert!(slider.supports_action(Action::Increment));
+
+        by_role(Role::Button).expect("button node");
+
+        // An AT-issued Increment should step the slider's value.
+        instance.perform_accessibility_action(&accesskit::ActionRequest {
+            action: Action::Increment,
+            target_tree: accesskit::TreeId::ROOT,
+            target_node: slider_id,
+            data: None,
+        });
+
+        let after = instance.accessibility_tree();
+        let stepped = after
+            .nodes
+            .iter()
+            .find(|(_, node)| node.role() == Role::Slider)
+            .map(|(_, node)| node.numeric_value())
+            .expect("slider node after increment");
+        assert_eq!(stepped, Some(6.0));
     }
 }

@@ -31,6 +31,36 @@ pub enum MouseEvent {
     },
 }
 
+/// Lifecycle phase of a touch point, mirroring `winit::event::TouchPhase` and
+/// the browser `TouchEvent` model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TouchPhase {
+    /// Finger first contacted the surface.
+    Started,
+    /// Finger moved while in contact.
+    Moved,
+    /// Finger lifted off cleanly.
+    Ended,
+    /// Gesture was interrupted (e.g. palm rejection, window focus loss).
+    Cancelled,
+}
+
+/// A single touch point forwarded from the host into
+/// [`crate::Instance::dispatch_touch`]. solite tracks one active finger at a
+/// time (the first `id` seen); additional simultaneous fingers are ignored
+/// until multi-touch gestures are implemented.
+#[derive(Debug, Clone, Copy)]
+pub struct TouchEvent {
+    /// Stable identifier for this finger across its `Started`→`Ended` life.
+    pub id: u64,
+    /// Lifecycle phase.
+    pub phase: TouchPhase,
+    /// Position in window-local (client) pixels, same space as
+    /// [`MouseEvent`] coordinates.
+    pub x: f32,
+    pub y: f32,
+}
+
 /// Event emitted from JS via `sendEvent(name, payload)` and received on the
 /// channel returned from [`crate::Instance::new`].
 #[derive(Debug, Clone)]

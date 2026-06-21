@@ -1,4 +1,5 @@
 mod bridge;
+mod console;
 mod outbox;
 mod state;
 
@@ -17,7 +18,7 @@ use rquickjs::{Context, Ctx, Error, Module, Object, Runtime, Value};
 use tokio::sync::mpsc::UnboundedSender;
 use url::Url;
 
-use std::fmt;
+use std::{fmt, io};
 
 use crate::events::{Event, KeyboardEvent};
 use crate::state::StateHandle;
@@ -216,6 +217,8 @@ pub(crate) struct JsContext {
     /// Base URL for resolving relative `<img src>` / CSS `url(...)` paths.
     /// Mutated by [`Instance::set_base_url`].
     pub(crate) base_url: Rc<RefCell<Url>>,
+    /// Imported CSS modules keyed by resolved module path.
+    pub(crate) imported_stylesheets: Rc<RefCell<HashMap<String, String>>>,
     /// Most recent boundary error from host-facing JS bridges.
     pub(crate) last_send_event_error: Arc<Mutex<Option<String>>>,
 }
@@ -259,6 +262,7 @@ impl JsContext {
         let inputs = crate::input::new_registry();
         let selects = crate::select::new_registry();
         let img_watcher = crate::img::new_handle();
+        let imported_stylesheets = Rc::new(RefCell::new(HashMap::new()));
         let last_send_event_error = Arc::new(Mutex::new(None));
         Ok(Self {
             runtime,
@@ -269,6 +273,7 @@ impl JsContext {
             selects,
             img_watcher,
             base_url,
+            imported_stylesheets,
             last_send_event_error,
         })
     }
@@ -291,6 +296,7 @@ impl JsContext {
         let inputs = crate::input::new_registry();
         let selects = crate::select::new_registry();
         let img_watcher = crate::img::new_handle();
+        let imported_stylesheets = Rc::new(RefCell::new(HashMap::new()));
         let last_send_event_error = Arc::new(Mutex::new(None));
         Ok(Self {
             runtime,
@@ -301,8 +307,47 @@ impl JsContext {
             selects,
             img_watcher,
             base_url,
+            imported_stylesheets,
             last_send_event_error,
         })
+    }
+
+    pub(crate) fn reload_imported_stylesheet(&self, path: &Path) -> io::Result<bool> {
+        let css = std::fs::read_to_string(path)?;
+        let canonical = path.canonicalize().ok();
+        let direct = path.to_string_lossy().to_string();
+
+        let key = {
+            let imported = self.imported_stylesheets.borrow();
+            if imported.contains_key(&direct) {
+                Some(direct.clone())
+            } else {
+                imported.keys().find_map(|key| {
+                    let key_path = Path::new(key);
+                    (key_path == path
+                        || canonical
+                            .as_ref()
+                            .and_then(|canonical| {
+                                key_path.canonicalize().ok().map(|k| k == *canonical)
+                            })
+                            .unwrap_or(false))
+                    .then(|| key.clone())
+                })
+            }
+        };
+
+        let Some(key) = key else {
+            return Ok(false);
+        };
+
+        let mut imported = self.imported_stylesheets.borrow_mut();
+        let Some(old) = imported.insert(key, css.clone()) else {
+            return Ok(false);
+        };
+        let mut doc = self.doc.borrow_mut();
+        doc.remove_user_agent_stylesheet(&old);
+        doc.add_user_agent_stylesheet(&css);
+        Ok(true)
     }
 
     pub fn mount(
@@ -339,6 +384,7 @@ impl JsContext {
             Rc::clone(&self.selects),
             Rc::clone(&self.img_watcher),
             Rc::clone(&self.base_url),
+            Rc::clone(&self.imported_stylesheets),
         );
 
         self.context.with(|ctx| {
@@ -347,6 +393,9 @@ impl JsContext {
                 .map_err(|err| JsContextError::MountError(err.to_string()))?;
 
             state::install(ctx.clone(), state)
+                .map_err(|err| JsContextError::MountError(err.to_string()))?;
+
+            console::install(ctx.clone())
                 .map_err(|err| JsContextError::MountError(err.to_string()))?;
 
             outbox::install(
@@ -1114,7 +1163,9 @@ struct SoliteModuleLoader;
 impl Loader for SoliteModuleLoader {
     fn load<'js>(&mut self, ctx: &Ctx<'js>, path: &str) -> rquickjs::Result<Module<'js>> {
         if path.ends_with(".css") {
-            return Err(Error::new_loading(path));
+            let css_text = std::fs::read_to_string(path)
+                .map_err(|err| Error::new_loading_message(path, err.to_string()))?;
+            return declare_css_module(ctx, path, &css_text);
         }
 
         let path_ref = Path::new(path);
@@ -1143,18 +1194,26 @@ impl Loader for CssLoader {
 
         let css_text = std::fs::read_to_string(path)
             .map_err(|err| Error::new_loading_message(path, err.to_string()))?;
-        let literal = serde_json::to_string(&css_text).unwrap_or_else(|_| "\"\"".into());
-        // Side effect of import: auto-register with the document. The default
-        // export still exposes the raw text for callers who want to inline it.
-        let source = format!(
-            "const __sol_css = {literal};\n\
-             if (typeof __sol_register_stylesheet === 'function') {{\n\
-                 __sol_register_stylesheet(__sol_css);\n\
-             }}\n\
-             export default __sol_css;\n"
-        );
-        Module::declare(ctx.clone(), path, source.as_bytes())
+        declare_css_module(ctx, path, &css_text)
     }
+}
+
+fn declare_css_module<'js>(
+    ctx: &Ctx<'js>,
+    path: &str,
+    css_text: &str,
+) -> rquickjs::Result<Module<'js>> {
+    let path_literal = serde_json::to_string(path).unwrap_or_else(|_| "\"\"".into());
+    let literal = serde_json::to_string(css_text).unwrap_or_else(|_| "\"\"".into());
+    // Side effect of import: auto-register with the document.
+    let source = format!(
+        "const __sol_css = {literal};\n\
+         if (typeof __sol_register_stylesheet === 'function') {{\n\
+             __sol_register_stylesheet({path_literal}, __sol_css);\n\
+         }}\n\
+         export {{}};\n"
+    );
+    Module::declare(ctx.clone(), path, source.as_bytes())
 }
 
 #[derive(Debug)]
@@ -1251,15 +1310,7 @@ impl Loader for VirtualModuleLoader {
         };
 
         if path.ends_with(".css") {
-            let literal = serde_json::to_string(source).unwrap_or_else(|_| "\"\"".into());
-            let source = format!(
-                "const __sol_css = {literal};\n\
-                 if (typeof __sol_register_stylesheet === 'function') {{\n\
-                     __sol_register_stylesheet(__sol_css);\n\
-                 }}\n\
-                 export default __sol_css;\n"
-            );
-            return Module::declare(ctx.clone(), path, source.as_bytes());
+            return declare_css_module(ctx, path, source);
         }
 
         #[cfg(not(feature = "jsx-compiler"))]
@@ -1347,7 +1398,7 @@ mod tests {
         let (tx, _rx) = mpsc::unbounded_channel();
 
         let module_source = std::fs::read_to_string(&module_path).expect("read main");
-        js.mount_with_module_path(
+        let _ = js.mount_with_module_path(
             &module_path.to_string_lossy(),
             &module_source,
             container_id,
@@ -1394,7 +1445,7 @@ mod tests {
         let js =
             JsContext::new_with_module_base(Rc::clone(&doc), Some(&module_path), test_base_url())
                 .expect("create JS context");
-        js.mount_with_module_path(
+        let _ = js.mount_with_module_path(
             module_path.to_string_lossy().as_ref(),
             &source,
             container_id,
@@ -1439,7 +1490,7 @@ mod tests {
         let js =
             JsContext::new_with_module_base(Rc::clone(&doc), Some(&module_path), test_base_url())
                 .expect("create JS context");
-        js.mount_with_module_path(
+        let _ = js.mount_with_module_path(
             module_path.to_string_lossy().as_ref(),
             &source,
             container_id,
@@ -1540,7 +1591,7 @@ mod tests {
         let state = StateHandle::new(json!({}));
         let (tx, _rx) = mpsc::unbounded_channel();
 
-        js.mount_with_module_path(
+        let _ = js.mount_with_module_path(
             "app.tsx",
             r#"
             import { render } from "solite-runtime";
@@ -1592,7 +1643,7 @@ mod tests {
         let state = StateHandle::new(json!({}));
         let (tx, _rx) = mpsc::unbounded_channel();
 
-        js.mount(
+        let _ = js.mount(
             r#"
             import { render } from "solite-runtime";
             function App() {
@@ -1625,7 +1676,7 @@ mod tests {
         let state = StateHandle::new(json!({}));
         let (tx, mut rx) = mpsc::unbounded_channel();
 
-        js.mount(
+        let _ = js.mount(
             r#"
             import { render } from "solite-runtime";
             function App() {
@@ -1683,7 +1734,7 @@ mod tests {
         let state = StateHandle::new(json!({}));
         let (tx, mut rx) = mpsc::unbounded_channel();
 
-        js.mount(
+        let _ = js.mount(
             r#"
             import { render } from "solite-runtime";
             function App() {
@@ -1733,7 +1784,7 @@ mod tests {
         let state = StateHandle::new(json!({}));
         let (tx, mut rx) = mpsc::unbounded_channel();
 
-        js.mount(
+        let _ = js.mount(
             r#"
             import { render } from "solite-runtime";
             function App() {
@@ -1789,7 +1840,7 @@ mod tests {
         let state = StateHandle::new(json!({}));
         let (tx, _) = mpsc::unbounded_channel();
 
-        js.mount(
+        let _ = js.mount(
             r#"
             import { render } from "solite-runtime";
             function App() {
@@ -1830,7 +1881,7 @@ mod tests {
         let (tx, _) = mpsc::unbounded_channel();
 
         // Component that records which node_id it gets for the button.
-        js.mount(
+        let _ = js.mount(
             r#"
             import { render } from "solite-runtime";
             globalThis.__btn_id = null;
@@ -1892,7 +1943,7 @@ mod tests {
 
         // Mount without a real component — just set up bridge globals.
         // We use a minimal component that exercises __sol_setProperty with a function.
-        js.mount(
+        let _ = js.mount(
             r#"
             // No solid import — call bridge directly
             const btn = __sol_createElement("button");
@@ -1945,7 +1996,7 @@ mod tests {
         let (doc, js, container_id) = make_setup();
         let state = StateHandle::new(json!({}));
         let (tx, _rx) = mpsc::unbounded_channel();
-        js.mount(
+        let _ = js.mount(
             r#"
             import { render } from "solite-runtime";
             function App() {
@@ -1984,7 +2035,7 @@ mod tests {
         let state = StateHandle::new(json!({"counter": 0}));
         let (tx, _) = mpsc::unbounded_channel();
 
-        js.mount(
+        let _ = js.mount(
             r#"
             import { render } from "solite-runtime";
             globalThis.__read_counter = () => globalThis.state.counter;
@@ -2021,7 +2072,7 @@ mod tests {
         let state = StateHandle::new(json!({}));
         let (tx, _) = mpsc::unbounded_channel();
 
-        js.mount(
+        let _ = js.mount(
             r#"
             import { render } from "solite-runtime";
             globalThis.__write_state = () => {
@@ -2071,7 +2122,7 @@ mod tests {
         let state = StateHandle::new(json!({}));
         let (tx, _) = mpsc::unbounded_channel();
 
-        js.mount(
+        let _ = js.mount(
             r#"
             import { render } from "solite-runtime";
             const originalApply = globalThis.__sol_apply_state_patch;
@@ -2134,7 +2185,7 @@ mod tests {
         let state = StateHandle::new(json!({}));
         let (tx, mut rx) = mpsc::unbounded_channel();
 
-        js.mount(
+        let _ = js.mount(
             r#"
             import { render } from "solite-runtime";
             addEventListener("host:ping", (event) => {
@@ -2180,7 +2231,7 @@ mod tests {
         let state = StateHandle::new(json!({}));
         let (tx, _) = mpsc::unbounded_channel();
 
-        js.mount(
+        let _ = js.mount(
             r#"
             import { render } from "solite-runtime";
             globalThis.__runtimeEventCalls = 0;
@@ -2218,7 +2269,7 @@ mod tests {
         let state = StateHandle::new(json!({ "count": 0 }));
         let (tx, _) = mpsc::unbounded_channel();
 
-        js.mount(
+        let _ = js.mount(
             r#"
             import { render } from "solite-runtime";
             function App() {
@@ -2258,7 +2309,7 @@ mod tests {
         let state = StateHandle::new(json!({}));
         let (tx, _) = mpsc::unbounded_channel();
 
-        js.mount(
+        let _ = js.mount(
             r#"
             import { render } from "solite-runtime";
             function App() {
@@ -2303,7 +2354,7 @@ mod tests {
         let state = StateHandle::new(json!({}));
         let (tx, mut rx) = mpsc::unbounded_channel();
 
-        js.mount(
+        let _ = js.mount(
             r#"
             import { render } from "solite-runtime";
             function App() {
@@ -2359,7 +2410,7 @@ mod tests {
         let state = StateHandle::new(json!({}));
         let (tx, mut rx) = mpsc::unbounded_channel();
 
-        js.mount(
+        let _ = js.mount(
             r#"
             import { render } from "solite-runtime";
             function App() {
@@ -2407,7 +2458,7 @@ mod tests {
         let (tx, _rx) = mpsc::unbounded_channel();
 
         // Build: container → parent_div → child_span (handler on parent_div)
-        js.mount(
+        let _ = js.mount(
             r#"
             import { render } from "solite-runtime";
             function App() {
@@ -2445,7 +2496,7 @@ mod tests {
         let state = StateHandle::new(json!({}));
         let (tx, mut rx) = mpsc::unbounded_channel();
 
-        js.mount(
+        let _ = js.mount(
             r#"
             import { render } from "solite-runtime";
             function App() {
@@ -2492,7 +2543,7 @@ mod tests {
         let (tx1, _) = mpsc::unbounded_channel();
         let (tx2, _) = mpsc::unbounded_channel();
 
-        js1.mount(
+        let _ = js1.mount(
             r#"
             import { render } from "solite-runtime";
             function App() {
@@ -2508,7 +2559,7 @@ mod tests {
             tx1,
         );
 
-        js2.mount(
+        let _ = js2.mount(
             r#"
             import { render } from "solite-runtime";
             function App() {

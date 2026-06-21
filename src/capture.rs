@@ -4,12 +4,32 @@
 //! to snapshot a GPU texture to disk during headless/offscreen rendering or test
 //! capture workflows.
 
-use std::path::Path;
-use std::sync::mpsc;
+use std::path::{Path, PathBuf};
 
 const RGBA_BYTES_PER_PIXEL: u32 = 4;
 
+/// Parse a `--capture <path>` / `--capture=<path>` CLI flag, with a fallback
+/// to the `SOLITE_CAPTURE` environment variable.
+#[allow(dead_code)]
+pub fn capture_path_from_cli() -> Option<PathBuf> {
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        if let Some(rest) = arg.strip_prefix("--capture=") {
+            return Some(PathBuf::from(rest));
+        }
+        if arg == "--capture" || arg == "-c" {
+            return args.next().map(PathBuf::from);
+        }
+    }
+
+    std::env::var_os("SOLITE_CAPTURE").map(PathBuf::from)
+}
+
+#[cfg(feature = "gpu")]
+use std::sync::mpsc;
+
 /// Copy `texture` into `path` as a PNG file.
+#[cfg(feature = "gpu")]
 pub fn capture_texture_to_png(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -110,6 +130,41 @@ pub fn capture_texture_to_png(
     image
         .save(path)
         .map_err(|err| format!("capture_texture_to_png: save failed: {err}"))?;
+
+    Ok(())
+}
+
+/// Copy CPU pixel bytes (`Rgba8`) into `path` as a PNG file.
+pub fn capture_buffer_to_png(
+    width: u32,
+    height: u32,
+    image_rgba8: &[u8],
+    path: &Path,
+) -> Result<(), String> {
+    if width == 0 || height == 0 {
+        return Err("capture_buffer_to_png: frame has zero dimensions".to_string());
+    }
+
+    let expected = width
+        .checked_mul(height)
+        .and_then(|px| px.checked_mul(RGBA_BYTES_PER_PIXEL))
+        .ok_or_else(|| "capture_buffer_to_png: image too large".to_string())?;
+    if image_rgba8.len() != expected as usize {
+        return Err(format!(
+            "capture_buffer_to_png: expected {expected} bytes, got {}",
+            image_rgba8.len()
+        ));
+    }
+
+    let image = image::ImageBuffer::<image::Rgba<u8>, Vec<u8>>::from_raw(
+        width,
+        height,
+        image_rgba8.to_vec(),
+    )
+    .ok_or_else(|| "capture_buffer_to_png: failed to build image".to_string())?;
+    image
+        .save(path)
+        .map_err(|err| format!("capture_buffer_to_png: save failed: {err}"))?;
 
     Ok(())
 }

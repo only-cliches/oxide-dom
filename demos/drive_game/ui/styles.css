@@ -1,0 +1,336 @@
+.screen {
+    position: relative;
+    display: block;
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+    color: #eaf6f0;
+    font-family: ui-monospace, Menlo, Monaco, Consolas, monospace;
+    background: transparent;
+}
+
+/* ---- Telemetry card -------------------------------------------------- */
+
+.telemetry-card {
+    position: absolute;
+    top: 26px;
+    left: 26px;
+    width: 326px;
+    padding: 20px 22px 22px;
+    border-radius: 20px;
+    border: 1px solid rgba(120, 235, 205, 0.28);
+    border-top: 1px solid rgba(170, 255, 225, 0.5);
+    background: linear-gradient(160deg, rgba(14, 26, 30, 0.86), rgba(8, 15, 19, 0.82));
+    box-shadow: 0 22px 60px rgba(0, 0, 0, 0.5), inset 0 0 40px rgba(60, 200, 170, 0.05);
+}
+
+.card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.eyebrow {
+    color: #59e6b6;
+    font-size: 11px;
+    letter-spacing: 0.26em;
+    text-transform: uppercase;
+}
+
+h1 {
+    margin: 6px 0 12px;
+    font-size: 30px;
+    line-height: 1;
+    font-weight: 800;
+    letter-spacing: 0.01em;
+    color: #f4fffb;
+    text-shadow: 0 0 18px rgba(90, 230, 190, 0.45);
+}
+
+.speed-cluster {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    margin: 6px 0 10px;
+}
+
+.readout.speed {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+}
+
+.readout.speed span {
+    font-size: 76px;
+    line-height: 0.82;
+    font-weight: 800;
+    color: #ffffff;
+    font-variant-numeric: tabular-nums;
+    text-shadow: 0 0 24px rgba(120, 240, 205, 0.5);
+}
+
+.readout.speed small {
+    color: #7fe3c4;
+    font-size: 17px;
+    letter-spacing: 0.08em;
+}
+
+.gear-badge {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 46px;
+    height: 46px;
+    border-radius: 12px;
+    border: 1px solid rgba(120, 235, 205, 0.4);
+    background: rgba(40, 120, 100, 0.18);
+    color: #8af7c8;
+    font-size: 24px;
+    font-weight: 800;
+    text-shadow: 0 0 14px rgba(120, 240, 205, 0.6);
+}
+
+.speed-gauge {
+    display: block;
+    height: 6px;
+    margin: 0 0 18px;
+    border-radius: 999px;
+    background: rgba(120, 220, 200, 0.12);
+    overflow: hidden;
+}
+
+.speed-gauge-fill {
+    display: block;
+    height: 6px;
+    border-radius: 999px;
+    background: linear-gradient(90deg, #2fb98a, #7df0c4 60%, #d8fff0);
+    box-shadow: 0 0 12px rgba(110, 240, 200, 0.7);
+    transition: width 90ms linear;
+}
+
+.metric-grid {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 14px;
+}
+
+.metric {
+    display: block;
+    width: 145px;
+    padding: 10px 12px;
+    border-radius: 12px;
+    border: 1px solid rgba(130, 220, 200, 0.12);
+    background: rgba(255, 255, 255, 0.04);
+}
+
+label {
+    display: block;
+    color: #84a39b;
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    margin-bottom: 5px;
+}
+
+strong {
+    display: block;
+    color: #f1fbf6;
+    font-size: 15px;
+    font-variant-numeric: tabular-nums;
+}
+
+.pill {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 999px;
+    color: #04130e;
+    background: linear-gradient(90deg, #7df0c4, #54e0aa);
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    box-shadow: 0 0 14px rgba(110, 240, 200, 0.45);
+}
+
+/* ---- Max-speed slider ------------------------------------------------ */
+
+/* NOTE: top/height here pin the track geometry the drag handler reads in
+   index.tsx (TRACK_TOP = card top + track top = 24 + 74 = 98, TRACK_HEIGHT =
+   170). Keep the two in sync. Border is drawn with an inset shadow so it does
+   not shift the absolute-positioning origin of the children. */
+.speed-card {
+    position: absolute;
+    top: 24px;
+    right: 26px;
+    width: 96px;
+    height: 268px;
+    padding: 0;
+    border-radius: 16px;
+    background: linear-gradient(160deg, rgba(14, 26, 30, 0.84), rgba(8, 15, 19, 0.8));
+    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45), inset 0 0 0 1px rgba(120, 235, 205, 0.24);
+}
+
+.speed-card-title {
+    position: absolute;
+    top: 14px;
+    left: 0;
+    right: 0;
+    text-align: center;
+    color: #84a39b;
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+}
+
+.speed-card-value {
+    position: absolute;
+    top: 30px;
+    left: 0;
+    right: 0;
+    text-align: center;
+    color: #ffffff;
+    font-size: 30px;
+    font-weight: 800;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+    text-shadow: 0 0 16px rgba(120, 240, 205, 0.45);
+}
+
+.speed-card-unit {
+    position: absolute;
+    top: 62px;
+    left: 0;
+    right: 0;
+    text-align: center;
+    color: #7fe3c4;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+}
+
+.slider-track {
+    position: absolute;
+    top: 74px;
+    left: 33px;
+    width: 30px;
+    height: 170px;
+    border-radius: 999px;
+    background: rgba(4, 14, 16, 0.92);
+    box-shadow: inset 0 0 0 1px rgba(140, 230, 210, 0.22), 0 0 14px rgba(80, 220, 180, 0.18);
+}
+
+/* Rectangular drag handle. Rendered behind the transparent hit layer so it
+   shows through without stealing pointer events. Only `top` is set inline. */
+.slider-handle {
+    position: absolute;
+    left: 24px;
+    width: 48px;
+    height: 14px;
+    border-radius: 5px;
+    background: linear-gradient(180deg, #eafff8, #6fe6bc);
+    border: 1px solid rgba(255, 255, 255, 0.55);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.55), 0 0 14px rgba(110, 240, 200, 0.6);
+}
+
+/* Transparent, slightly wider hit layer sitting on top of the track so drags
+   that drift sideways keep registering. Childless leaf: mousemove only reaches
+   the exact hit node, and it must own the handlers. */
+.slider-hit {
+    position: absolute;
+    top: 74px;
+    left: 22px;
+    width: 52px;
+    height: 170px;
+    background: transparent;
+}
+
+/* Full-screen, transparent capture layer mounted only while dragging the
+   slider. Because it covers the viewport and sits on top, pointer moves and the
+   release are tracked anywhere — the drag no longer drops when the cursor
+   leaves the thin track. */
+.drag-capture {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: transparent;
+}
+
+/* ---- Status / controls ---------------------------------------------- */
+
+.status-card {
+    display: block;
+    position: absolute;
+    right: 26px;
+    bottom: 26px;
+    width: 250px;
+    padding: 16px 18px;
+    border-radius: 16px;
+    border: 1px solid rgba(120, 235, 205, 0.22);
+    background: linear-gradient(160deg, rgba(12, 22, 26, 0.82), rgba(7, 13, 17, 0.78));
+    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.42);
+}
+
+.controls-title {
+    margin-bottom: 12px;
+    color: #cdeee2;
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+}
+
+.controls-grid {
+    display: grid;
+    grid-template-columns: 38px 1fr;
+    gap: 8px 12px;
+    align-items: center;
+    color: #b9d6cb;
+    font-size: 13px;
+}
+
+kbd {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    color: #f4fffb;
+    font-size: 15px;
+    border: 1px solid rgba(150, 240, 215, 0.3);
+    border-bottom: 2px solid rgba(60, 180, 150, 0.5);
+    background: rgba(255, 255, 255, 0.06);
+}
+
+/* ---- FPS ------------------------------------------------------------- */
+
+.fps-card {
+    display: block;
+    position: absolute;
+    left: 26px;
+    bottom: 26px;
+    width: 110px;
+    padding: 12px 16px;
+    border-radius: 14px;
+    border: 1px solid rgba(120, 235, 205, 0.22);
+    background: linear-gradient(160deg, rgba(12, 22, 26, 0.82), rgba(7, 13, 17, 0.78));
+    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.42);
+}
+
+.fps-label {
+    color: #84a39b;
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+}
+
+.fps-value {
+    margin-top: 4px;
+    color: #ffffff;
+    font-size: 30px;
+    font-weight: 800;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+    text-shadow: 0 0 16px rgba(120, 240, 205, 0.45);
+}

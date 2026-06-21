@@ -115,6 +115,7 @@ impl Generated {
 /// Error raised while transpiling a project.
 #[derive(Debug)]
 pub enum BundleError {
+    MissingOutDir,
     NoEntry(PathBuf),
     Read(PathBuf, io::Error),
     Write(PathBuf, io::Error),
@@ -125,6 +126,10 @@ pub enum BundleError {
 impl fmt::Display for BundleError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::MissingOutDir => write!(
+                f,
+                "OUT_DIR is not set; bundle_for_cargo must run from build.rs"
+            ),
             Self::NoEntry(dir) => write!(
                 f,
                 "no entry module found in {} (looked for {})",

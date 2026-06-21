@@ -27,13 +27,20 @@ fn init_scaffolds_then_build_roundtrips() {
     let work = workdir("init");
     let proj = work.join("proj");
 
-    // init writes the four files.
+    // init writes the source files plus host workflow examples.
     let status = solite()
         .args(["init", proj.to_str().unwrap()])
         .status()
         .unwrap();
     assert!(status.success(), "init failed");
-    for file in ["index.tsx", "styles.css", "tsconfig.json", "runtime.d.ts"] {
+    for file in [
+        "index.tsx",
+        "styles.css",
+        "tsconfig.json",
+        "runtime.d.ts",
+        "build.rs.example",
+        "mount.rs.example",
+    ] {
         assert!(proj.join(file).is_file(), "init did not write {file}");
     }
 

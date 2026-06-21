@@ -2,19 +2,19 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
-#[path = "common/args.rs"]
-mod args;
+#[path = "common/gpu.rs"]
+mod gpu;
 
 use blitz_traits::shell::{ClipboardError, ShellProvider};
 use serde_json::json;
-use solite::{
-    Instance, InstanceConfig, KeyboardEvent,
-    capture::capture_texture_to_png,
-    gpu::{BlitContext, BlitDraw, present_to_surface},
-    winit::key_to_string,
-};
 #[cfg(feature = "jsx-compiler")]
 use solite::compile_component_source;
+use solite::{
+    Instance, InstanceConfig, KeyboardEvent,
+    capture::{capture_path_from_cli, capture_texture_to_png},
+    gpu::{BlitDraw, present_to_surface},
+    winit::{WinitBridge, key_to_string},
+};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, KeyEvent, MouseButton as WinitMouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
@@ -63,6 +63,9 @@ struct App {
     gpu: Option<Gpu>,
     last_mouse: (f32, f32),
     modifiers: ModifiersState,
+    /// Held only for its HiDPI conversion helpers (`to_logical_pos` /
+    /// `to_logical_size`); this example forwards events manually.
+    bridge: WinitBridge,
     capture_path: Option<PathBuf>,
     capture_done: bool,
 }
@@ -83,36 +86,7 @@ impl ShellProvider for SystemClipboard {
     }
 }
 
-struct Gpu {
-    device: Arc<wgpu::Device>,
-    queue: Arc<wgpu::Queue>,
-    surface: wgpu::Surface<'static>,
-    config: wgpu::SurfaceConfiguration,
-    blit: BlitContext,
-}
-
-impl App {
-    fn to_logical_pos(&self, x: f64, y: f64) -> (f32, f32) {
-        let scale = self
-            .window
-            .as_ref()
-            .map_or(1.0, |window| window.scale_factor());
-        let scale = if scale > 0.0 { scale } else { 1.0 };
-        ((x / scale) as f32, (y / scale) as f32)
-    }
-
-    fn to_logical_size(&self, width: u32, height: u32) -> (u32, u32) {
-        let scale = self
-            .window
-            .as_ref()
-            .map_or(1.0, |window| window.scale_factor());
-        let scale = if scale > 0.0 { scale } else { 1.0 };
-        (
-            (width as f64 / scale).max(1.0).round() as u32,
-            (height as f64 / scale).max(1.0).round() as u32,
-        )
-    }
-}
+type Gpu = gpu::Gpu;
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
@@ -121,7 +95,8 @@ impl ApplicationHandler for App {
             .with_inner_size(winit::dpi::LogicalSize::new(320u32, 80u32));
         let window = Arc::new(event_loop.create_window(attrs).expect("window"));
 
-        let gpu = pollster::block_on(init_gpu(window.clone()));
+        let gpu = pollster::block_on(gpu::init_gpu(window.clone(), "solite-text-input-device"));
+        self.bridge.set_scale_factor(window.scale_factor());
 
         let (instance_width, instance_height) = (320, 80);
 
@@ -130,7 +105,9 @@ impl ApplicationHandler for App {
             InstanceConfig {
                 width: instance_width,
                 height: instance_height,
+                #[cfg(feature = "gpu")]
                 device: gpu.device.clone(),
+                #[cfg(feature = "gpu")]
                 queue: gpu.queue.clone(),
                 stylesheets: vec![TEXT_INPUT_CSS.to_string()],
                 document_scroll: false,
@@ -258,19 +235,15 @@ impl ApplicationHandler for App {
             }
 
             WindowEvent::Resized(size) => {
-                let scale = self
-                    .window
-                    .as_ref()
-                    .map_or(1.0, |window| window.scale_factor())
-                    .max(1.0);
-                let width = size.width.max(1);
-                let height = size.height.max(1);
-                let logical_width = (width as f64 / scale).max(1.0).round() as u32;
-                let logical_height = (height as f64 / scale).max(1.0).round() as u32;
+                if let Some(window) = self.window.as_ref() {
+                    self.bridge.set_scale_factor(window.scale_factor());
+                }
+                let (logical_width, logical_height) =
+                    self.bridge.to_logical_size(size.width, size.height);
 
                 if let (Some(instance), Some(gpu)) = (self.instance.as_mut(), self.gpu.as_mut()) {
-                    gpu.config.width = width;
-                    gpu.config.height = height;
+                    gpu.config.width = size.width.max(1);
+                    gpu.config.height = size.height.max(1);
                     gpu.surface.configure(&gpu.device, &gpu.config);
                     instance.resize(logical_width, logical_height);
                 }
@@ -280,7 +253,7 @@ impl ApplicationHandler for App {
             }
 
             WindowEvent::CursorMoved { position, .. } => {
-                let (x, y) = self.to_logical_pos(position.x, position.y);
+                let (x, y) = self.bridge.to_logical_pos(position.x, position.y);
                 self.last_mouse = (x, y);
 
                 if let Some(instance) = self.instance.as_mut() {
@@ -438,72 +411,6 @@ impl ApplicationHandler for App {
     }
 }
 
-async fn init_gpu(window: Arc<Window>) -> Gpu {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::all(),
-        ..wgpu::InstanceDescriptor::new_without_display_handle()
-    });
-    let surface = instance.create_surface(window.clone()).expect("surface");
-
-    let adapter = instance
-        .request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::None,
-            compatible_surface: Some(&surface),
-            force_fallback_adapter: false,
-        })
-        .await
-        .expect("adapter");
-
-    let (device, queue) = adapter
-        .request_device(&wgpu::DeviceDescriptor {
-            label: Some("solite-text-input-device"),
-            required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::default(),
-            experimental_features: wgpu::ExperimentalFeatures::disabled(),
-            memory_hints: wgpu::MemoryHints::default(),
-            trace: wgpu::Trace::Off,
-        })
-        .await
-        .expect("device");
-
-    let size = window.inner_size();
-    let caps = surface.get_capabilities(&adapter);
-    let format = caps
-        .formats
-        .iter()
-        .copied()
-        .find(|f| f.is_srgb())
-        .unwrap_or(caps.formats[0]);
-    let alpha_mode = caps
-        .alpha_modes
-        .iter()
-        .copied()
-        .find(|mode| *mode == wgpu::CompositeAlphaMode::Opaque)
-        .or_else(|| caps.alpha_modes.first().copied())
-        .unwrap_or(wgpu::CompositeAlphaMode::Opaque);
-
-    let config = wgpu::SurfaceConfiguration {
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-        format,
-        width: size.width.max(1),
-        height: size.height.max(1),
-        present_mode: wgpu::PresentMode::AutoVsync,
-        alpha_mode,
-        view_formats: vec![],
-        desired_maximum_frame_latency: 2,
-    };
-    surface.configure(&device, &config);
-    let blit = BlitContext::new(&device, config.format);
-
-    Gpu {
-        device: Arc::new(device),
-        queue: Arc::new(queue),
-        surface,
-        config,
-        blit,
-    }
-}
-
 fn main() {
     let event_loop = EventLoop::new().expect("event loop");
     let mut app = App {
@@ -512,7 +419,8 @@ fn main() {
         gpu: None,
         last_mouse: (8.0, 8.0),
         modifiers: ModifiersState::empty(),
-        capture_path: args::capture_path_from_cli(),
+        bridge: WinitBridge::new(),
+        capture_path: capture_path_from_cli(),
         capture_done: false,
     };
     event_loop.run_app(&mut app).expect("run");

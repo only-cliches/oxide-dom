@@ -16,46 +16,15 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+#[path = "common/headless.rs"]
+mod headless;
+
 use serde_json::json;
 #[cfg(feature = "jsx-compiler")]
 use solite::compile_component_source;
 use solite::{Instance, InstanceConfig};
+#[cfg(feature = "gpu")]
 use wgpu;
-
-async fn init_device() -> (std::sync::Arc<wgpu::Device>, std::sync::Arc<wgpu::Queue>) {
-    if std::env::var_os("XDG_RUNTIME_DIR").is_none() {
-        unsafe {
-            std::env::set_var("XDG_RUNTIME_DIR", "/tmp");
-        }
-    }
-
-    let wgpu_instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::all(),
-        ..wgpu::InstanceDescriptor::new_without_display_handle()
-    });
-    let adapter = wgpu_instance
-        .request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-        })
-        .await
-        .expect("no adapter available for benchmark");
-
-    let (device, queue) = adapter
-        .request_device(&wgpu::DeviceDescriptor {
-            label: Some("solite-perf-bench"),
-            required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::default(),
-            experimental_features: wgpu::ExperimentalFeatures::disabled(),
-            memory_hints: wgpu::MemoryHints::default(),
-            trace: wgpu::Trace::Off,
-        })
-        .await
-        .expect("request device");
-
-    (std::sync::Arc::new(device), std::sync::Arc::new(queue))
-}
 
 fn parse_arg(index: usize, default: usize) -> usize {
     let mut args = std::env::args().skip(1);
@@ -150,7 +119,10 @@ fn run_benchmark(
     frames: usize,
     warmup_frames: usize,
 ) -> std::io::Result<()> {
-    let (device, queue) = pollster::block_on(init_device());
+    let (device, queue) = pollster::block_on(headless::init_headless_device(
+        "solite-perf-bench",
+        wgpu::PowerPreference::HighPerformance,
+    ));
     let component_source =
         compile_component_source_or_identity(&build_component(element_count, width, height))?;
 
@@ -158,14 +130,16 @@ fn run_benchmark(
         InstanceConfig {
             width: width as u32,
             height: height as u32,
+            #[cfg(feature = "gpu")]
             device: device.clone(),
+            #[cfg(feature = "gpu")]
             queue: queue.clone(),
             stylesheets: vec![],
             document_scroll: false,
             base_url: None,
             initial_state: None,
             registered_resources: vec![],
-                scale_factor: 1.0,
+            scale_factor: 1.0,
         },
         &component_source,
     )

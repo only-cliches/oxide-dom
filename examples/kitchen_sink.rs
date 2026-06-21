@@ -1,25 +1,20 @@
-use std::fs::{create_dir_all, write};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
-#[path = "common/args.rs"]
-mod args;
+#[path = "common/gpu.rs"]
+mod gpu;
 
 use blitz_traits::shell::{ClipboardError, ShellProvider};
 use serde_json::json;
-#[cfg(feature = "jsx-compiler")]
-use solite::compile_component_file;
 use solite::winit::{WinitBridge, WinitPollScheduler};
 use solite::{
-    Event, FileWatch, Instance, InstanceConfig, Scene, SourceChangeSummary, StylesheetId,
-    SurfaceRect, TickResult,
-    capture::{build_capture_path, capture_texture_to_png},
-    gpu::{BlitContext, BlitDraw, present_to_surface},
+    Event, InstanceConfig, Scene, SurfaceRect, TickResult,
+    capture::{build_capture_path, capture_path_from_cli, capture_texture_to_png},
+    gpu::{BlitDraw, present_to_surface},
+    workflow::{ReloadAction, SourceProject, SourceProjectWatch},
 };
 use winit::application::ApplicationHandler;
-use winit::dpi::PhysicalPosition;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::window::{Window, WindowId};
@@ -30,29 +25,22 @@ const BIRDS_URL: &str = "solite-image://birds";
 // Kitchen-sink assets now live in a source directory so this example is
 // editable as normal TSX/CSS without embedding large inline strings.
 const KITCHEN_SINK_DIR: &str = "examples/kitchen_sink";
-const KITCHEN_SINK_SOURCE: &str = "main.tsx";
-const KITCHEN_SINK_STYLE: &str = "styles.css";
 
 struct DemoProject {
-    stylesheet_path: PathBuf,
-    stylesheet: String,
-    source_dir: PathBuf,
-    source_file: PathBuf,
-    dist_file: PathBuf,
+    source: SourceProject,
     birds_bytes: Vec<u8>,
 }
 
 struct RenderTargetData {
     label: String,
     rx: tokio::sync::mpsc::UnboundedReceiver<Event>,
-    stylesheet_id: Option<StylesheetId>,
 }
 
 struct App {
     window: Option<Arc<Window>>,
     gpu: Option<Gpu>,
     project: Option<DemoProject>,
-    watch: Option<FileWatch>,
+    watch: Option<SourceProjectWatch>,
     watch_poller: WinitPollScheduler,
     scene: Scene<RenderTargetData>,
     bridge: WinitBridge,
@@ -76,36 +64,15 @@ impl ShellProvider for SystemClipboard {
     }
 }
 
-struct Gpu {
-    device: Arc<wgpu::Device>,
-    queue: Arc<wgpu::Queue>,
-    surface: wgpu::Surface<'static>,
-    config: wgpu::SurfaceConfiguration,
-    blit: BlitContext,
-}
+type Gpu = gpu::Gpu;
 
 impl App {
-    fn scale_factor(&self) -> f64 {
-        self.window
-            .as_ref()
-            .map_or(1.0, |window| window.scale_factor())
-    }
-
-    fn scale_factor_safe(&self) -> f64 {
-        let scale = self.scale_factor();
-        if scale > 0.0 { scale } else { 1.0 }
-    }
-
-    fn to_logical_size(&self, width: u32, height: u32) -> (u32, u32) {
-        let scale = self.scale_factor_safe();
-        let logical_width = (width as f64 / scale).max(1.0).round() as u32;
-        let logical_height = (height as f64 / scale).max(1.0).round() as u32;
-        (logical_width, logical_height)
-    }
-
+    /// Current logical size of the window, via the bridge's scale factor (the
+    /// physical→logical math lives in the library now).
     fn window_logical_size(&self) -> (u32, u32) {
         self.window.as_ref().map_or((640, 420), |window| {
-            self.to_logical_size(window.inner_size().width, window.inner_size().height)
+            let size = window.inner_size();
+            self.bridge.to_logical_size(size.width, size.height)
         })
     }
 
@@ -154,98 +121,63 @@ impl App {
     }
 
     fn maybe_rebuild(&mut self) -> bool {
-        let Some(watch) = self.watch.as_mut() else {
-            return false;
-        };
-        let Some(source_dir) = self.project.as_ref().map(|p| p.source_dir.clone()) else {
+        let Some(watch) = self.watch.as_ref() else {
             return false;
         };
 
-        let SourceChangeSummary {
-            bundle_rebuild,
-            css_reload,
-        } = watch.poll_source_changes(&source_dir);
+        match watch.poll() {
+            ReloadAction::None => false,
+            ReloadAction::Remount => {
+                let Some(gpu) = self.gpu.as_ref() else {
+                    return false;
+                };
+                let Some(project) = self.project.as_ref() else {
+                    return false;
+                };
+                let (width, height) = self.window_logical_size();
+                let layouts = Self::target_layout(width, TARGET_LABELS.len());
+                let scale_factor = self.bridge.scale_factor();
 
-        if !bundle_rebuild && !css_reload {
-            return false;
-        }
-
-        let window_size = if bundle_rebuild {
-            Some(self.window_logical_size())
-        } else {
-            None
-        };
-        let scale_factor = self.scale_factor_safe();
-        let Some(project) = self.project.as_mut() else {
-            return false;
-        };
-
-        let refreshed_stylesheet = match std::fs::read_to_string(&project.stylesheet_path) {
-            Ok(css) => {
-                project.stylesheet = css;
-                Some(project.stylesheet.clone())
-            }
-            Err(err) => {
-                eprintln!(
-                    "[{PROJECT_NAME}] failed to reload stylesheet: {}; using previous version",
-                    err
-                );
-                Some(project.stylesheet.clone())
-            }
-        };
-
-        if bundle_rebuild {
-            let Some(gpu) = self.gpu.as_ref() else {
-                return false;
-            };
-
-            if let Err(err) = build_bundle(project) {
-                eprintln!("[{PROJECT_NAME}] rebuild failed: {err}");
-                return false;
-            }
-
-            let (width, height) = window_size.unwrap_or((640, 420));
-            let layouts = Self::target_layout(width, TARGET_LABELS.len());
-            let stylesheets = vec![refreshed_stylesheet.unwrap_or_default()];
-            let dist_file = project.dist_file.clone();
-
-            match mount_targets(
-                &dist_file,
-                &stylesheets,
-                &layouts,
-                TARGET_LABELS.as_slice(),
-                height,
-                scale_factor,
-                &gpu.device,
-                &gpu.queue,
-                &project.birds_bytes,
-            ) {
-                Ok(mut scene) => {
-                    for surface in scene.surfaces_mut() {
-                        let _ = surface.instance.tick();
+                match mount_targets(
+                    &project.source,
+                    &layouts,
+                    TARGET_LABELS.as_slice(),
+                    height,
+                    scale_factor,
+                    &gpu.device,
+                    &gpu.queue,
+                    &project.birds_bytes,
+                ) {
+                    Ok(mut scene) => {
+                        for surface in scene.surfaces_mut() {
+                            let _ = surface.instance.tick();
+                        }
+                        self.scene = scene;
+                        true
                     }
-                    self.scene = scene;
-                }
-                Err(err) => {
-                    eprintln!("[{PROJECT_NAME}] failed to remount targets: {err}");
+                    Err(err) => {
+                        eprintln!("[{PROJECT_NAME}] failed to remount targets: {err}");
+                        false
+                    }
                 }
             }
-            return true;
-        }
-
-        if css_reload {
-            let stylesheet = refreshed_stylesheet.unwrap_or_default();
-            for surface in self.scene.surfaces_mut() {
-                let stylesheet_id = surface
-                    .instance
-                    .upsert_stylesheet(surface.data.stylesheet_id, &stylesheet);
-                surface.data.stylesheet_id = Some(stylesheet_id);
-                let _ = surface.instance.tick();
+            ReloadAction::CssChanged(paths) => {
+                let Some(project) = self.project.as_ref() else {
+                    return false;
+                };
+                let mut changed = false;
+                for surface in self.scene.surfaces_mut() {
+                    if project
+                        .source
+                        .reload_imported_css(&mut surface.instance, &paths)
+                    {
+                        let _ = surface.instance.tick();
+                        changed = true;
+                    }
+                }
+                changed
             }
-            return true;
         }
-
-        false
     }
 
     fn drain_events(&mut self) {
@@ -270,7 +202,7 @@ impl ApplicationHandler for App {
             window => window,
         };
 
-        let gpu = pollster::block_on(init_gpu(window.clone()));
+        let gpu = pollster::block_on(gpu::init_gpu(window.clone(), "solite-kitchen-device"));
 
         let project = match create_demo_project() {
             Ok(project) => project,
@@ -280,21 +212,18 @@ impl ApplicationHandler for App {
             }
         };
 
-        if let Err(err) = build_bundle(&project) {
-            eprintln!("[{PROJECT_NAME}] initial build failed: {err}");
-            return;
-        }
-
-        let (width, height) = self.to_logical_size(gpu.config.width, gpu.config.height);
+        self.bridge.set_scale_factor(window.scale_factor());
+        let (width, height) = self
+            .bridge
+            .to_logical_size(gpu.config.width, gpu.config.height);
+        let scale_factor = self.bridge.scale_factor();
         let layouts = Self::target_layout(width, TARGET_LABELS.len());
-        let stylesheets = vec![project.stylesheet.clone()];
         let mut scene = match mount_targets(
-            &project.dist_file,
-            &stylesheets,
+            &project.source,
             &layouts,
             TARGET_LABELS.as_slice(),
             height,
-            self.scale_factor_safe(),
+            scale_factor,
             &gpu.device,
             &gpu.queue,
             &project.birds_bytes,
@@ -309,7 +238,7 @@ impl ApplicationHandler for App {
             let _ = surface.instance.tick();
         }
 
-        let watch = match Instance::watch_files(&project.source_dir) {
+        let watch = match project.source.watch() {
             Ok(watch) => watch,
             Err(err) => {
                 eprintln!("[{PROJECT_NAME}] failed to watch source: {err}");
@@ -332,11 +261,11 @@ impl ApplicationHandler for App {
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::Resized(size) => {
-                let scale = self.scale_factor_safe();
-                let width = size.width.max(1);
-                let height = size.height.max(1);
-                let logical_width = (width as f64 / scale).max(1.0).round() as u32;
-                let logical_height = (height as f64 / scale).max(1.0).round() as u32;
+                if let Some(window) = self.window.as_ref() {
+                    self.bridge.set_scale_factor(window.scale_factor());
+                }
+                let (logical_width, logical_height) =
+                    self.bridge.to_logical_size(size.width, size.height);
 
                 if let (Some(gpu), Some(window)) = (self.gpu.as_mut(), self.window.as_ref()) {
                     gpu.config.width = size.width.max(1);
@@ -380,7 +309,7 @@ impl ApplicationHandler for App {
                 // whose instance had nothing new to paint (needs_paint=false)
                 // would be wiped by the clear, leaving only the targets that
                 // changed visible.
-                let scale = self.scale_factor_safe();
+                let scale = self.bridge.scale_factor();
                 for surface in self.scene.surfaces_mut() {
                     let target_result = surface.instance.tick();
                     let draw_x = {
@@ -479,23 +408,11 @@ impl ApplicationHandler for App {
                 }
             }
 
-            // Mouse / keyboard / modifier / wheel / close events are forwarded
-            // through the bridge. CursorMoved positions arrive in physical
-            // pixels; convert to logical so they line up with the surface
-            // rects (which are tracked in logical coordinates).
+            // Mouse / keyboard / modifier / wheel / touch / close events are
+            // forwarded through the bridge, which converts physical pointer
+            // positions to logical using its scale factor.
             other => {
-                let scale = self.scale_factor_safe();
-                let translated = match other {
-                    WindowEvent::CursorMoved {
-                        device_id,
-                        position,
-                    } => WindowEvent::CursorMoved {
-                        device_id,
-                        position: PhysicalPosition::new(position.x / scale, position.y / scale),
-                    },
-                    other => other,
-                };
-                let r = self.bridge.handle(&mut self.scene, &translated);
+                let r = self.bridge.handle(&mut self.scene, &other);
                 if r.close_requested {
                     event_loop.exit();
                     return;
@@ -561,70 +478,16 @@ fn create_demo_project() -> io::Result<DemoProject> {
         ));
     }
 
-    let source_file = source_dir.join(KITCHEN_SINK_SOURCE);
-    if !source_file.is_file() {
-        return Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            format!(
-                "missing kitchen sink source file: {}",
-                source_file.display()
-            ),
-        ));
-    }
-
-    let stylesheet_path = source_dir.join(KITCHEN_SINK_STYLE);
-    if !stylesheet_path.is_file() {
-        return Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            format!(
-                "missing kitchen sink stylesheet: {}",
-                stylesheet_path.display()
-            ),
-        ));
-    }
-    let stylesheet = std::fs::read_to_string(&stylesheet_path)?;
-
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock")
-        .as_nanos();
-
-    let root = std::env::temp_dir().join(format!("{PROJECT_NAME}-{nanos}"));
-    create_dir_all(root.join("dist"))?;
-
     let birds_bytes = std::fs::read(manifest_dir.join("examples/birds.jpg"))?;
 
     Ok(DemoProject {
-        stylesheet,
-        stylesheet_path: stylesheet_path.clone(),
-        source_dir,
-        source_file,
-        dist_file: root.join("dist/App.js"),
+        source: SourceProject::new(source_dir),
         birds_bytes,
     })
 }
 
-fn build_bundle(project: &DemoProject) -> io::Result<()> {
-    #[cfg(feature = "jsx-compiler")]
-    {
-        create_dir_all(&project.dist_file.parent().expect("dist parent"))?;
-        let source_path = &project.source_file;
-        let compiled = compile_component_file(&source_path).map_err(io::Error::other)?;
-        write(&project.dist_file, compiled)?;
-        Ok(())
-    }
-    #[cfg(not(feature = "jsx-compiler"))]
-    {
-        let _ = project;
-        Err(io::Error::other(
-            "kitchen_sink JSX bundling requires the `jsx-compiler` feature",
-        ))
-    }
-}
-
 fn mount_targets(
-    compiled_path: &Path,
-    stylesheets: &[String],
+    source: &SourceProject,
     layouts: &[(u32, u32)],
     labels: &[&'static str],
     height: u32,
@@ -635,16 +498,16 @@ fn mount_targets(
 ) -> io::Result<Scene<RenderTargetData>> {
     let mut scene = Scene::new();
 
-    let bundle_source = std::fs::read_to_string(compiled_path)?;
-
     for (index, &(x, width)) in layouts.iter().enumerate() {
         let label = labels.get(index).copied().unwrap_or("Target");
 
-        let (instance, rx) = Instance::new(
-            InstanceConfig {
+        let (instance, rx) = source
+            .mount_live(InstanceConfig {
                 width,
                 height,
+                #[cfg(feature = "gpu")]
                 device: Arc::clone(device),
+                #[cfg(feature = "gpu")]
                 queue: Arc::clone(queue),
                 stylesheets: vec![],
                 document_scroll: true,
@@ -663,14 +526,8 @@ fn mount_targets(
                 })),
                 registered_resources: vec![(BIRDS_URL.to_string(), birds_bytes.to_vec())],
                 scale_factor,
-            },
-            &bundle_source,
-        )
-        .expect("create instance");
-        let mut instance = instance;
-        let stylesheet_id = stylesheets
-            .first()
-            .map(|stylesheet| instance.add_stylesheet(stylesheet));
+            })
+            .map_err(|err| io::Error::other(err.to_string()))?;
         instance.set_shell_provider(Arc::new(SystemClipboard));
 
         scene.add_surface(
@@ -679,79 +536,11 @@ fn mount_targets(
             RenderTargetData {
                 label: label.to_string(),
                 rx,
-                stylesheet_id,
             },
         );
     }
 
     Ok(scene)
-}
-
-async fn init_gpu(window: Arc<Window>) -> Gpu {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::all(),
-        ..wgpu::InstanceDescriptor::new_without_display_handle()
-    });
-    let surface = instance.create_surface(window.clone()).expect("surface");
-
-    let adapter = instance
-        .request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::None,
-            compatible_surface: Some(&surface),
-            force_fallback_adapter: false,
-        })
-        .await
-        .expect("adapter");
-
-    let (device, queue) = adapter
-        .request_device(&wgpu::DeviceDescriptor {
-            label: Some("solite-kitchen-device"),
-            required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::default(),
-            experimental_features: wgpu::ExperimentalFeatures::disabled(),
-            memory_hints: wgpu::MemoryHints::default(),
-            trace: wgpu::Trace::Off,
-        })
-        .await
-        .expect("device");
-
-    let size = window.inner_size();
-    let caps = surface.get_capabilities(&adapter);
-    let format = caps
-        .formats
-        .iter()
-        .copied()
-        .find(|f| f.is_srgb())
-        .unwrap_or(caps.formats[0]);
-    let alpha_mode = caps
-        .alpha_modes
-        .iter()
-        .copied()
-        .find(|mode| *mode == wgpu::CompositeAlphaMode::Opaque)
-        .or_else(|| caps.alpha_modes.first().copied())
-        .unwrap_or(wgpu::CompositeAlphaMode::Opaque);
-
-    let config = wgpu::SurfaceConfiguration {
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-        format,
-        width: size.width.max(1),
-        height: size.height.max(1),
-        present_mode: wgpu::PresentMode::AutoVsync,
-        alpha_mode,
-        view_formats: vec![],
-        desired_maximum_frame_latency: 2,
-    };
-
-    surface.configure(&device, &config);
-    let blit = BlitContext::new(&device, config.format);
-
-    Gpu {
-        device: Arc::new(device),
-        queue: Arc::new(queue),
-        surface,
-        config,
-        blit,
-    }
 }
 
 fn main() {
@@ -764,7 +553,7 @@ fn main() {
         watch_poller: WinitPollScheduler::with_default_interval(),
         scene: Scene::new(),
         bridge: WinitBridge::new(),
-        capture_path: args::capture_path_from_cli(),
+        capture_path: capture_path_from_cli(),
         capture_done: false,
     };
     event_loop.run_app(&mut app).expect("run");

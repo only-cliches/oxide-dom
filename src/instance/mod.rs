@@ -30,7 +30,9 @@ pub struct InstanceConfig {
     /// the blit onto the OS surface is 1:1 and crisp on HiDPI displays. Pass
     /// `window.scale_factor()` from winit. Defaults to `1.0` (non-HiDPI).
     pub scale_factor: f64,
+    #[cfg(feature = "gpu")]
     pub device: Arc<wgpu::Device>,
+    #[cfg(feature = "gpu")]
     pub queue: Arc<wgpu::Queue>,
     /// Stylesheets registered before the first paint. Each entry is a CSS
     /// source string. Equivalent to calling [`Instance::add_stylesheet`] after
@@ -186,11 +188,14 @@ pub struct Instance {
     width: u32,
     height: u32,
     scale_factor: f64,
+    #[cfg(feature = "gpu")]
     device: Arc<wgpu::Device>,
     doc: Rc<RefCell<BaseDocument>>,
     js: JsContext,
     painter: Painter,
+    #[cfg(feature = "gpu")]
     texture: wgpu::Texture,
+    #[cfg(feature = "gpu")]
     texture_view: wgpu::TextureView,
     state: StateHandle,
     #[allow(dead_code)]
@@ -214,6 +219,9 @@ pub struct Instance {
     spinners: Vec<crate::spinner::NumberSpinner>,
     /// Currently-dragging scrollbar, if any.
     scrollbar_drag: Option<ScrollbarDrag>,
+    /// Touch gesture state: the active finger and any coasting fling. Drives
+    /// `dispatch_touch` and the momentum step in `tick`.
+    touch: crate::touch::TouchState,
     /// Host-supplied scrollbar theme override. When unset, scrollbar colours
     /// are derived per node from the container's computed `color` property.
     scrollbar_theme: Option<ScrollbarColors>,
@@ -242,10 +250,11 @@ pub struct FileWatch {
 ///   to be recompiled.
 /// - `css_reload`: true when a stylesheet changed and can potentially be updated
 ///   without remounting the instance.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SourceChangeSummary {
     pub bundle_rebuild: bool,
     pub css_reload: bool,
+    pub css_paths: Vec<PathBuf>,
 }
 
 impl FileWatch {
@@ -256,9 +265,9 @@ impl FileWatch {
 
     /// Drain all pending file changes and classify them for live reload.
     ///
-    /// Only files with extensions `jsx`, `tsx`, `ts`, or `css` are considered.
-    /// Others are ignored so unrelated filesystem activity does not trigger
-    /// unnecessary rebuild work.
+    /// Only files with extensions `js`, `mjs`, `jsx`, `tsx`, `ts`, or `css`
+    /// are considered. Others are ignored so unrelated filesystem activity
+    /// does not trigger unnecessary rebuild work.
     pub fn poll_source_changes(&self, source_dir: &Path) -> SourceChangeSummary {
         let mut summary = SourceChangeSummary::default();
         while let Some(path) = self.poll() {
@@ -267,11 +276,17 @@ impl FileWatch {
             }
 
             match path.extension().and_then(|ext| ext.to_str()) {
-                Some(ext) if matches!(ext.to_ascii_lowercase().as_str(), "jsx" | "tsx" | "ts") => {
+                Some(ext)
+                    if matches!(
+                        ext.to_ascii_lowercase().as_str(),
+                        "js" | "mjs" | "jsx" | "tsx" | "ts"
+                    ) =>
+                {
                     summary.bundle_rebuild = true;
                 }
                 Some(ext) if ext.eq_ignore_ascii_case("css") => {
                     summary.css_reload = true;
+                    summary.css_paths.push(path);
                 }
                 _ => {}
             }
@@ -281,4 +296,5 @@ impl FileWatch {
 }
 
 #[cfg(test)]
+#[cfg(all(test, feature = "gpu"))]
 mod tests;

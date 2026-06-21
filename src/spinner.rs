@@ -67,18 +67,63 @@ pub(crate) fn collect_number_spinners(
 }
 
 /// Hit-test `(x, y)` in document coordinates against all spinner buttons.
-pub(crate) fn hit_spinner(spinners: &[NumberSpinner], x: f32, y: f32) -> Option<SpinnerHit> {
+///
+/// `slop` expands each button outward by that many pixels on every edge. Pass
+/// `0.0` for pixel-exact mouse hit-testing; the touch path passes a small
+/// positive value so fingers don't need to land precisely on the ~8px-tall
+/// arrow buttons.
+pub(crate) fn hit_spinner(
+    spinners: &[NumberSpinner],
+    x: f32,
+    y: f32,
+    slop: f32,
+) -> Option<SpinnerHit> {
     for &spinner in spinners {
         let (ux, uy, uw, uh) = spinner.up_button;
-        if x >= ux && x < ux + uw && y >= uy && y < uy + uh {
+        if x >= ux - slop && x < ux + uw + slop && y >= uy - slop && y < uy + uh {
             return Some(SpinnerHit::Up(spinner.node_id));
         }
         let (dx, dy, dw, dh) = spinner.down_button;
-        if x >= dx && x < dx + dw && y >= dy && y < dy + dh {
+        if x >= dx - slop && x < dx + dw + slop && y >= dy && y < dy + dh + slop {
             return Some(SpinnerHit::Down(spinner.node_id));
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn one_spinner() -> Vec<NumberSpinner> {
+        vec![NumberSpinner {
+            node_id: 7,
+            up_button: (100.0, 50.0, 16.0, 10.0),
+            down_button: (100.0, 60.0, 16.0, 10.0),
+        }]
+    }
+
+    #[test]
+    fn exact_hit_requires_no_slop() {
+        let spinners = one_spinner();
+        // 4px above the up button: a miss without slop, a hit with touch slop.
+        assert!(hit_spinner(&spinners, 108.0, 46.0, 0.0).is_none());
+        assert!(matches!(
+            hit_spinner(&spinners, 108.0, 46.0, 10.0),
+            Some(SpinnerHit::Up(7))
+        ));
+    }
+
+    #[test]
+    fn slop_does_not_blur_the_midline_between_buttons() {
+        let spinners = one_spinner();
+        // The shared edge at y=60: up's bottom / down's top. Slop only extends
+        // outward, so a point just below the divider still hits Down, not Up.
+        assert!(matches!(
+            hit_spinner(&spinners, 108.0, 61.0, 10.0),
+            Some(SpinnerHit::Down(7))
+        ));
+    }
 }
 
 /// Paint spinner buttons as an overlay on the document scene.
@@ -115,7 +160,13 @@ pub(crate) fn paint_number_spinners<S: PaintScene>(
         // 1 px divider between the two halves.
         let mid_y = by + bh_up;
         let div_rect = Rect::new(bx, mid_y, bx + bw, mid_y + 1.0);
-        scene.fill(Fill::NonZero, Affine::scale(scale), divider, None, &div_rect);
+        scene.fill(
+            Fill::NonZero,
+            Affine::scale(scale),
+            divider,
+            None,
+            &div_rect,
+        );
 
         // Up arrow ▲ — center snapped to nearest 0.5px for odd-sized buttons.
         {

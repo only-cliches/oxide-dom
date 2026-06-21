@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [workspace]
-members = ["solite-build"]
+members = ["solite-build", "demos/drive_game"]
 # The vendored blitz packages are their own workspace; keep them out of ours.
 exclude = ["vendor"]
 resolver = "2"
@@ -14,14 +14,21 @@ default = ["with_system_fonts", "jsx-compiler"]
 with_system_fonts = ["blitz-dom/system_fonts"]
 jsx-compiler = ["dep:solite-build"]
 # Opt-in GPU bootstrap helpers (`solite::gpu`): device/queue + windowed surface
-# setup. Adds no dependencies beyond wgpu (already required); gates API only.
-gpu = []
+# setup.
+gpu = ["dep:wgpu"]
 # Optional screenshot capture helper (`solite::capture`) with opt-in `image` support.
+# Capture helpers can run from CPU pixels or GPU textures.
 capture = ["dep:image"]
 # Opt-in winit translation layer. Pulls in `winit` as a regular dep so hosts
 # can use the `solite::winit` helpers to forward window events into an
 # `Instance` without hand-rolling key/mouse/modifier translation.
-winit = ["dep:winit"]
+winit = ["dep:winit", "gpu"]
+# Opt-in accessibility integration. Exposes `Instance::accessibility_tree`
+# (an enriched accesskit tree) + `perform_accessibility_action`, and the
+# `solite::winit::A11yAdapter` wrapper over `accesskit_winit` so screen
+# readers (NVDA / VoiceOver / Orca) see a live tree. Implies `winit` because
+# the adapter is winit-facing.
+a11y = ["winit", "dep:accesskit", "dep:accesskit_winit"]
 
 [dependencies]
 blitz-dom = { version = "=0.3.0-alpha.4", path = "vendor/blitz/packages/blitz-dom", default-features = false, features = ["svg", "woff", "accessibility", "file_input", "custom-widget", "incremental"] }
@@ -35,7 +42,7 @@ parley = { version = "0.10", default-features = false, features = ["std"] }
 stylo = "0.18"
 style_dom = { version = "0.18", package = "stylo_dom" }
 relative-path = "1"
-wgpu = "29"
+wgpu = { version = "29", optional = true }
 rquickjs = { version = "0.9", features = ["loader", "macro"] }
 tokio = { version = "1", features = ["sync"] }
 serde_json = "1"
@@ -47,6 +54,11 @@ bytes = "1"
 solite-build = { version = "0.1.0", path = "solite-build", optional = true }
 winit = { version = "0.30", optional = true }
 image = { version = "0.25", optional = true }
+# Pinned to the accesskit version blitz-dom's accessibility feature already
+# resolves (0.24.1) so there is a single accesskit in the tree. accesskit_winit
+# 0.33 depends on this exact accesskit and on winit 0.30.
+accesskit = { version = "=0.24", optional = true }
+accesskit_winit = { version = "0.33", optional = true }
 
 [dev-dependencies]
 winit = "0.30"
@@ -63,48 +75,54 @@ arboard = "3.4"
 [[example]]
 name = "winit_window"
 path = "examples/winit_window.rs"
-required-features = ["winit", "gpu", "capture"]
+required-features = ["winit", "gpu", "capture", "jsx-compiler"]
 
 [[example]]
 name = "two_instances"
 path = "examples/two_instances.rs"
-required-features = ["winit", "gpu", "capture"]
+required-features = ["winit", "gpu", "capture", "jsx-compiler"]
 
 [[example]]
 name = "text_input"
 path = "examples/text_input.rs"
-required-features = ["winit", "gpu", "capture"]
+required-features = ["winit", "gpu", "capture", "jsx-compiler"]
 
 [[example]]
 name = "kitchen_sink"
 path = "examples/kitchen_sink.rs"
-required-features = ["winit", "gpu", "capture"]
+required-features = ["winit", "gpu", "capture", "jsx-compiler"]
 
 [[example]]
 name = "todo"
 path = "examples/todo.rs"
-required-features = ["winit", "gpu"]
+required-features = ["winit", "gpu", "jsx-compiler"]
 
 [[example]]
 name = "offscreen_capture"
 path = "examples/offscreen_capture.rs"
-required-features = ["capture"]
+required-features = ["capture", "jsx-compiler"]
 
 [[example]]
 name = "images"
 path = "examples/images.rs"
-required-features = ["winit", "gpu", "capture"]
+required-features = ["winit", "gpu", "capture", "jsx-compiler"]
 
 [[example]]
 name = "custom_font"
 path = "examples/custom_font.rs"
-required-features = ["winit", "gpu", "capture"]
+required-features = ["winit", "gpu", "capture", "jsx-compiler"]
 
 [[example]]
 name = "select_popup_capture"
 path = "examples/select_popup_capture.rs"
-required-features = ["capture"]
+required-features = ["capture", "gpu", "jsx-compiler"]
 
 [[example]]
 name = "perf_animate_elements"
 path = "examples/perf_animate_elements.rs"
+required-features = ["gpu", "jsx-compiler"]
+
+[[example]]
+name = "a11y_touch"
+path = "examples/a11y_touch.rs"
+required-features = ["a11y", "gpu", "capture", "jsx-compiler"]

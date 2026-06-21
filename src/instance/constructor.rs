@@ -36,6 +36,54 @@ fn parse_base_url(base_url: &str) -> Result<Url, InstanceError> {
     })
 }
 
+struct RenderTargets {
+    painter: Painter,
+    #[cfg(feature = "gpu")]
+    texture: wgpu::Texture,
+    #[cfg(feature = "gpu")]
+    texture_view: wgpu::TextureView,
+}
+
+#[cfg(feature = "gpu")]
+fn create_render_targets(
+    device: &Arc<wgpu::Device>,
+    queue: &Arc<wgpu::Queue>,
+    width: u32,
+    height: u32,
+) -> RenderTargets {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("solite"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_DST
+            | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let painter = Painter::new(Arc::clone(device), Arc::clone(queue), width, height);
+
+    RenderTargets {
+        painter,
+        texture,
+        texture_view,
+    }
+}
+
+#[cfg(not(feature = "gpu"))]
+fn create_render_targets(width: u32, height: u32) -> RenderTargets {
+    RenderTargets {
+        painter: Painter::new(width, height),
+    }
+}
+
 impl Instance {
     /// Create a new instance.
     ///
@@ -52,13 +100,15 @@ impl Instance {
             width,
             height,
             scale_factor,
-            device,
-            queue,
             stylesheets: initial_stylesheets,
             document_scroll,
             base_url: base_url_config,
             initial_state,
             registered_resources,
+            #[cfg(feature = "gpu")]
+            device,
+            #[cfg(feature = "gpu")]
+            queue,
         } = config;
 
         let phys_w = ((width as f64) * scale_factor).round() as u32;
@@ -124,37 +174,29 @@ impl Instance {
             event_tx.clone(),
         )?;
 
-        // --- GPU resources ---
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("solite"),
-            size: wgpu::Extent3d {
-                width: phys_w,
-                height: phys_h,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::COPY_DST
-                | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        });
-        let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-        let painter = Painter::new(Arc::clone(&device), Arc::clone(&queue), phys_w, phys_h);
+        // --- render targets ---
+        let render_targets = create_render_targets(
+            #[cfg(feature = "gpu")]
+            &device,
+            #[cfg(feature = "gpu")]
+            &queue,
+            phys_w,
+            phys_h,
+        );
 
         let instance = Self {
             width,
             height,
             scale_factor,
+            #[cfg(feature = "gpu")]
             device,
             doc,
             js,
-            painter,
-            texture,
-            texture_view,
+            painter: render_targets.painter,
+            #[cfg(feature = "gpu")]
+            texture: render_targets.texture,
+            #[cfg(feature = "gpu")]
+            texture_view: render_targets.texture_view,
             state,
             event_tx,
             container_id,
@@ -170,6 +212,7 @@ impl Instance {
             scrollbars: Vec::new(),
             spinners: Vec::new(),
             scrollbar_drag: None,
+            touch: crate::touch::TouchState::default(),
             scrollbar_theme: None,
             net_provider,
             base_url,
@@ -238,13 +281,15 @@ impl Instance {
             width,
             height,
             scale_factor,
-            device,
-            queue,
             stylesheets: initial_stylesheets,
             document_scroll,
             base_url: base_url_config,
             initial_state,
             registered_resources,
+            #[cfg(feature = "gpu")]
+            device,
+            #[cfg(feature = "gpu")]
+            queue,
         } = config;
 
         let phys_w = ((width as f64) * scale_factor).round() as u32;
@@ -324,37 +369,29 @@ impl Instance {
             event_tx.clone(),
         )?;
 
-        // --- GPU resources ---
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("solite"),
-            size: wgpu::Extent3d {
-                width: phys_w,
-                height: phys_h,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::COPY_DST
-                | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        });
-        let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-        let painter = Painter::new(Arc::clone(&device), Arc::clone(&queue), phys_w, phys_h);
+        // --- render targets ---
+        let render_targets = create_render_targets(
+            #[cfg(feature = "gpu")]
+            &device,
+            #[cfg(feature = "gpu")]
+            &queue,
+            phys_w,
+            phys_h,
+        );
 
         let instance = Self {
             width,
             height,
             scale_factor,
+            #[cfg(feature = "gpu")]
             device,
             doc,
             js,
-            painter,
-            texture,
-            texture_view,
+            painter: render_targets.painter,
+            #[cfg(feature = "gpu")]
+            texture: render_targets.texture,
+            #[cfg(feature = "gpu")]
+            texture_view: render_targets.texture_view,
             state,
             event_tx,
             container_id,
@@ -370,6 +407,7 @@ impl Instance {
             scrollbars: Vec::new(),
             spinners: Vec::new(),
             scrollbar_drag: None,
+            touch: crate::touch::TouchState::default(),
             scrollbar_theme: None,
             net_provider,
             base_url,
@@ -466,13 +504,15 @@ impl Instance {
             width,
             height,
             scale_factor,
-            device,
-            queue,
             stylesheets: initial_stylesheets,
             document_scroll,
             base_url: base_url_config,
             initial_state,
             registered_resources,
+            #[cfg(feature = "gpu")]
+            device,
+            #[cfg(feature = "gpu")]
+            queue,
         } = config;
 
         let phys_w = ((width as f64) * scale_factor).round() as u32;
@@ -539,37 +579,29 @@ impl Instance {
             event_tx.clone(),
         )?;
 
-        // --- GPU resources ---
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("solite"),
-            size: wgpu::Extent3d {
-                width: phys_w,
-                height: phys_h,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::COPY_DST
-                | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        });
-        let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-        let painter = Painter::new(Arc::clone(&device), Arc::clone(&queue), phys_w, phys_h);
+        // --- render targets ---
+        let render_targets = create_render_targets(
+            #[cfg(feature = "gpu")]
+            &device,
+            #[cfg(feature = "gpu")]
+            &queue,
+            phys_w,
+            phys_h,
+        );
 
         let instance = Self {
             width,
             height,
             scale_factor,
+            #[cfg(feature = "gpu")]
             device,
             doc,
             js,
-            painter,
-            texture,
-            texture_view,
+            painter: render_targets.painter,
+            #[cfg(feature = "gpu")]
+            texture: render_targets.texture,
+            #[cfg(feature = "gpu")]
+            texture_view: render_targets.texture_view,
             state,
             event_tx,
             container_id,
@@ -585,6 +617,7 @@ impl Instance {
             scrollbars: Vec::new(),
             spinners: Vec::new(),
             scrollbar_drag: None,
+            touch: crate::touch::TouchState::default(),
             scrollbar_theme: None,
             net_provider,
             base_url,

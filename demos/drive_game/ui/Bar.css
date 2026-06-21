@@ -1,0 +1,50 @@
+.bar-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 10px 0;
+}
+
+.bar-label {
+    width: 46px;
+    color: #8fa6a0;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.bar-track {
+    position: relative;
+    display: block;
+    width: 188px;
+    height: 9px;
+    border-radius: 999px;
+    background: rgba(120, 220, 200, 0.10);
+    box-shadow: inset 0 0 0 1px rgba(140, 230, 210, 0.14);
+    overflow: hidden;
+}
+
+.bar-fill {
+    display: block;
+    height: 9px;
+    border-radius: 999px;
+    transition: width 80ms linear;
+}
+
+.bar-fill.right {
+    background: linear-gradient(90deg, #3fd6a6, #8af7c8);
+    box-shadow: 0 0 10px rgba(90, 240, 190, 0.65);
+}
+
+.bar-fill.left {
+    background: linear-gradient(90deg, #ffb35c, #ff7a59);
+    box-shadow: 0 0 10px rgba(255, 150, 90, 0.6);
+}
+
+.bar-value {
+    width: 50px;
+    color: #e9f5ef;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+}

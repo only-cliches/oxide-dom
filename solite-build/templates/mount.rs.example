@@ -1,0 +1,26 @@
+#[cfg(not(feature = "live-reload"))]
+mod ui_bundle {
+    include!(concat!(env!("OUT_DIR"), "/ui_bundle.rs"));
+}
+
+fn mount_ui(
+    config: solite::InstanceConfig,
+) -> Result<
+    (
+        solite::Instance,
+        tokio::sync::mpsc::UnboundedReceiver<solite::Event>,
+    ),
+    solite::InstanceError,
+> {
+    let project = solite::workflow::SourceProject::new("ui");
+
+    #[cfg(feature = "live-reload")]
+    {
+        project.mount_live(config)
+    }
+
+    #[cfg(not(feature = "live-reload"))]
+    {
+        project.mount_bundle(config, ui_bundle::modules())
+    }
+}

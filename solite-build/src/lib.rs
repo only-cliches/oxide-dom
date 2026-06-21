@@ -10,6 +10,7 @@
 mod compiler;
 
 pub mod bundle;
+pub mod workflow;
 
 pub use compiler::{
     CompileError, compile_component_file, compile_component_source, compile_module_source,

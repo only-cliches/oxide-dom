@@ -9,16 +9,16 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-#[path = "common/args.rs"]
-mod args;
+#[path = "common/gpu.rs"]
+mod gpu;
 
-use solite::{
-    Instance, InstanceConfig,
-    capture::{build_capture_path, capture_texture_to_png},
-    gpu::{BlitContext, BlitDraw, present_to_surface},
-};
 #[cfg(feature = "jsx-compiler")]
 use solite::compile_component_source;
+use solite::{
+    Instance, InstanceConfig,
+    capture::{build_capture_path, capture_path_from_cli, capture_texture_to_png},
+    gpu::{BlitDraw, present_to_surface},
+};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, KeyEvent, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
@@ -65,13 +65,7 @@ struct TwoApp {
     capture_done: bool,
 }
 
-struct Gpu {
-    device: Arc<wgpu::Device>,
-    queue: Arc<wgpu::Queue>,
-    surface: wgpu::Surface<'static>,
-    config: wgpu::SurfaceConfiguration,
-    blit: BlitContext,
-}
+type Gpu = gpu::Gpu;
 
 impl ApplicationHandler for TwoApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
@@ -79,7 +73,7 @@ impl ApplicationHandler for TwoApp {
             .with_title("solite: two instances")
             .with_inner_size(winit::dpi::LogicalSize::new(400u32, 200u32));
         let window = Arc::new(event_loop.create_window(attrs).expect("window"));
-        let gpu = pollster::block_on(init_gpu(window.clone()));
+        let gpu = pollster::block_on(gpu::init_gpu(window.clone(), "solite-two"));
 
         // Both instances share the same Device + Queue via Arc::clone, and
         // both boot with the same CSS so the panels stay visually consistent.
@@ -89,7 +83,9 @@ impl ApplicationHandler for TwoApp {
             InstanceConfig {
                 width: 200,
                 height: 200,
+                #[cfg(feature = "gpu")]
                 device: gpu.device.clone(),
+                #[cfg(feature = "gpu")]
                 queue: gpu.queue.clone(),
                 stylesheets: vec![SHARED_CSS.to_string()],
                 document_scroll: false,
@@ -105,7 +101,9 @@ impl ApplicationHandler for TwoApp {
             InstanceConfig {
                 width: 200,
                 height: 200,
+                #[cfg(feature = "gpu")]
                 device: gpu.device.clone(),
+                #[cfg(feature = "gpu")]
                 queue: gpu.queue.clone(),
                 stylesheets: vec![SHARED_CSS.to_string()],
                 document_scroll: false,
@@ -280,67 +278,6 @@ fn compile_two_instances_component_source(_component_source: &str) -> String {
     panic!("two_instances example requires the `jsx-compiler` feature");
 }
 
-async fn init_gpu(window: Arc<Window>) -> Gpu {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::all(),
-        ..wgpu::InstanceDescriptor::new_without_display_handle()
-    });
-    let surface = instance.create_surface(window.clone()).expect("surface");
-    let adapter = instance
-        .request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::None,
-            compatible_surface: Some(&surface),
-            force_fallback_adapter: false,
-        })
-        .await
-        .expect("adapter");
-    let (device, queue) = adapter
-        .request_device(&wgpu::DeviceDescriptor {
-            label: Some("solite-two"),
-            required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::default(),
-            experimental_features: wgpu::ExperimentalFeatures::disabled(),
-            memory_hints: wgpu::MemoryHints::default(),
-            trace: wgpu::Trace::Off,
-        })
-        .await
-        .expect("device");
-    let size = window.inner_size();
-    let caps = surface.get_capabilities(&adapter);
-    let format = caps
-        .formats
-        .iter()
-        .copied()
-        .find(|f| f.is_srgb())
-        .unwrap_or(caps.formats[0]);
-    let alpha_mode = caps
-        .alpha_modes
-        .iter()
-        .copied()
-        .find(|mode| *mode == wgpu::CompositeAlphaMode::Opaque)
-        .or_else(|| caps.alpha_modes.first().copied())
-        .unwrap_or(wgpu::CompositeAlphaMode::Opaque);
-    let config = wgpu::SurfaceConfiguration {
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-        format,
-        width: size.width.max(1),
-        height: size.height.max(1),
-        present_mode: wgpu::PresentMode::AutoVsync,
-        alpha_mode,
-        view_formats: vec![],
-        desired_maximum_frame_latency: 2,
-    };
-    surface.configure(&device, &config);
-    let blit = BlitContext::new(&device, config.format);
-    Gpu {
-        device: Arc::new(device),
-        queue: Arc::new(queue),
-        surface,
-        config,
-        blit,
-    }
-}
-
 fn main() {
     let event_loop = EventLoop::new().expect("event loop");
     let mut app = TwoApp {
@@ -348,7 +285,7 @@ fn main() {
         a: None,
         b: None,
         gpu: None,
-        capture_path: args::capture_path_from_cli(),
+        capture_path: capture_path_from_cli(),
         capture_done: false,
     };
     event_loop.run_app(&mut app).expect("run");

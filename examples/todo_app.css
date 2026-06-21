@@ -4,9 +4,9 @@ body {
   margin: 0;
   padding: 32px 16px;
   min-height: 100vh;
-  background: linear-gradient(160deg, #6a82fb 0%, #fc5c7d 100%);
+  background: white;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  color: #1f2540;
+  color: black;
 }
 
 .page {
@@ -14,6 +14,7 @@ body {
   justify-content: center;
   align-items: flex-start;
   padding: 8px;
+  background: grey;
 }
 
 .card {

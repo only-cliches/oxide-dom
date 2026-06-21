@@ -141,14 +141,14 @@ input.field-radio {
     font: 12px/1.35 monospace;
     color: #cfdaef;
     border-bottom: 1px solid #25314a;
-    outline: 1px solid transparent;
+    box-shadow: inset 0 0 0 1px transparent;
 }
 .row-even { background: #141b2b; }
 .row-odd  { background: #101725; }
 .row:hover {
     background: #224e6f;
     color: #ffffff;
-    outline: 1px solid #7dd3fc;
+    box-shadow: inset 0 0 0 1px #7dd3fc;
 }
 
 .bird-img {

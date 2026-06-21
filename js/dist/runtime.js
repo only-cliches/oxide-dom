@@ -1306,7 +1306,7 @@ var runtimeState = {
     }
   }
 };
-(globalThis.__SOL_INITIAL_STATE != null && runtimeState.__init(globalThis.__SOL_INITIAL_STATE));
+globalThis.__SOL_INITIAL_STATE != null && runtimeState.__init(globalThis.__SOL_INITIAL_STATE);
 globalThis.__sol_state = runtimeState;
 try {
   delete globalThis.__SOL_INITIAL_STATE;
@@ -1393,6 +1393,18 @@ var classListToString = (value) => {
   if (typeof value !== "object") return String(value);
   return Object.entries(value).filter(([, v]) => !!v).map(([k]) => k).join(" ");
 };
+var warnedAttributeFns = /* @__PURE__ */ new Set();
+var warnUncalledAttributeFn = (name) => {
+  const warn = globalThis.__sol_dev_warn;
+  if (typeof warn !== "function" || warnedAttributeFns.has(name)) {
+    return;
+  }
+  warnedAttributeFns.add(name);
+  const message = `attribute \`${name}\` was given a function instead of a value, so it is applied once and never updates. Call the getter in the attribute \u2014 e.g. \`${name}={fn()}\` not \`${name}={fn}\` \u2014 so it is wrapped in a reactive effect.`;
+  warn(message);
+  const sink = globalThis.__sol_dev_warnings = globalThis.__sol_dev_warnings || [];
+  sink.push(message);
+};
 var applyRuntimeProperty = (node, name, value, _prev) => {
   const id = unwrap2(node);
   const event = typeof name === "string" ? globalThis.__sol_extractEventName?.(name) : null;
@@ -1403,6 +1415,7 @@ var applyRuntimeProperty = (node, name, value, _prev) => {
     return value;
   }
   if (typeof value === "function" && event == null) {
+    warnUncalledAttributeFn(name);
     value = value();
   }
   if (name === "style") {

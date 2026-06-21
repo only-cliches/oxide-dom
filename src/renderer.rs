@@ -4,6 +4,10 @@ use anyrender_vello::VelloImageRenderer;
 use blitz_dom::BaseDocument;
 use kurbo::{Affine, Rect};
 use peniko::Fill;
+#[cfg(feature = "gpu")]
+use std::sync::Arc;
+#[cfg(feature = "gpu")]
+use wgpu;
 
 use crate::scrollbar::{ScrollbarColors, ScrollbarRegion};
 use crate::spinner::NumberSpinner;
@@ -25,9 +29,11 @@ pub(crate) struct InputSelection {
     pub height: f32,
 }
 
-/// Renderer: blitz-dom layout + paint → CPU RGBA8 buffer → upload to a wgpu texture.
+/// Renderer: blitz-dom layout + paint → CPU RGBA8 buffer, optionally uploaded to
+// a GPU texture when that output is enabled.
 pub(crate) struct Painter {
-    queue: std::sync::Arc<wgpu::Queue>,
+    #[cfg(feature = "gpu")]
+    queue: Arc<wgpu::Queue>,
     width: u32,
     height: u32,
     vello: VelloImageRenderer,
@@ -36,9 +42,10 @@ pub(crate) struct Painter {
 }
 
 impl Painter {
+    #[cfg(feature = "gpu")]
     pub fn new(
-        _device: std::sync::Arc<wgpu::Device>,
-        queue: std::sync::Arc<wgpu::Queue>,
+        _device: Arc<wgpu::Device>,
+        queue: Arc<wgpu::Queue>,
         width: u32,
         height: u32,
     ) -> Self {
@@ -53,12 +60,26 @@ impl Painter {
         }
     }
 
-    /// Resolve document layout and paint into `target`.
-    ///
-    /// `document.resolve()` is assumed to have been called already. The
-    /// optional `scrollbars` slice is painted as a post-pass on top of the
-    /// document content. Select popups render as normal DOM nodes mounted
-    /// under their `<select>` while open, so no special pass is needed here.
+    #[cfg(not(feature = "gpu"))]
+    pub fn new(width: u32, height: u32) -> Self {
+        let pixel_len = (width * height * 4) as usize;
+        Self {
+            width,
+            height,
+            vello: VelloImageRenderer::new(width, height),
+            cpu_buffer: vec![0u8; pixel_len],
+            padded_buffer: Vec::new(),
+        }
+    }
+
+    #[cfg(not(feature = "gpu"))]
+    pub(crate) fn pixel_bytes(&self) -> &[u8] {
+        &self.cpu_buffer
+    }
+
+    /// Resolve document layout and paint into `target` (or CPU memory when no
+    /// GPU backend is enabled).
+    #[cfg(feature = "gpu")]
     pub fn paint(
         &mut self,
         document: &mut BaseDocument,
@@ -70,6 +91,8 @@ impl Painter {
         scale: f64,
         target: &wgpu::Texture,
     ) {
+        self.cpu_buffer.fill(0);
+
         self.vello.render(
             |scene| {
                 blitz_paint::paint_scene(scene, document, scale, self.width, self.height, 0, 0);
@@ -134,6 +157,37 @@ impl Painter {
                 height: self.height,
                 depth_or_array_layers: 1,
             },
+        );
+    }
+
+    #[cfg(not(feature = "gpu"))]
+    pub fn paint(
+        &mut self,
+        document: &mut BaseDocument,
+        scrollbars: &[ScrollbarRegion],
+        input_selections: &[InputSelection],
+        input_carets: &[InputCaret],
+        number_spinners: &[NumberSpinner],
+        theme_override: Option<ScrollbarColors>,
+        scale: f64,
+    ) {
+        self.cpu_buffer.fill(0);
+
+        self.vello.render(
+            |scene| {
+                blitz_paint::paint_scene(scene, document, scale, self.width, self.height, 0, 0);
+                paint_input_selections(scene, input_selections, scale);
+                paint_input_carets(scene, input_carets, scale);
+                crate::scrollbar::paint_scrollbars(
+                    scene,
+                    document,
+                    scrollbars,
+                    scale,
+                    theme_override,
+                );
+                crate::spinner::paint_number_spinners(scene, number_spinners, scale);
+            },
+            &mut self.cpu_buffer,
         );
     }
 

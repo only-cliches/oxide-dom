@@ -37,6 +37,9 @@ pub(crate) struct DomBridge {
     /// `BaseDocument::resolve_url` does (`pub(crate)` in blitz, so we
     /// duplicate here).
     pub base_url: Rc<RefCell<Url>>,
+    /// CSS modules imported for side effects, keyed by their resolved module
+    /// path so development tooling can replace them without remounting.
+    pub imported_stylesheets: Rc<RefCell<HashMap<String, String>>>,
 }
 
 fn html_qual(tag: &str) -> QualName {
@@ -254,6 +257,7 @@ impl DomBridge {
         selects: crate::select::SelectRegistry,
         img_watcher: ImgWatcherHandle,
         base_url: Rc<RefCell<Url>>,
+        imported_stylesheets: Rc<RefCell<HashMap<String, String>>>,
     ) -> Self {
         Self {
             doc,
@@ -262,6 +266,7 @@ impl DomBridge {
             selects,
             img_watcher,
             base_url,
+            imported_stylesheets,
         }
     }
 
@@ -283,12 +288,21 @@ impl DomBridge {
         // import for side effects or to emit their own `<style>` instead.
         {
             let doc = Rc::clone(&self.doc);
+            let imported_stylesheets = Rc::clone(&self.imported_stylesheets);
             globals.set(
                 "__sol_register_stylesheet",
-                Function::new(ctx.clone(), move |css: String| -> JsResult<()> {
-                    doc.borrow_mut().add_user_agent_stylesheet(&css);
-                    Ok(())
-                }),
+                Function::new(
+                    ctx.clone(),
+                    move |path: String, css: String| -> JsResult<()> {
+                        let old = imported_stylesheets.borrow_mut().insert(path, css.clone());
+                        let mut doc = doc.borrow_mut();
+                        if let Some(old) = old {
+                            doc.remove_user_agent_stylesheet(&old);
+                        }
+                        doc.add_user_agent_stylesheet(&css);
+                        Ok(())
+                    },
+                ),
             )?;
         }
 
@@ -914,6 +928,7 @@ mod tests {
         let selects = crate::select::new_registry();
         let img_watcher = crate::img::new_handle();
         let base_url = Rc::new(RefCell::new(Url::parse("file:///").expect("base url")));
+        let imported_stylesheets = Rc::new(RefCell::new(HashMap::new()));
         let bridge = DomBridge::new(
             Rc::clone(&doc),
             Rc::clone(&handlers),
@@ -921,6 +936,7 @@ mod tests {
             selects,
             img_watcher,
             base_url,
+            imported_stylesheets,
         );
         (doc, handlers, bridge)
     }

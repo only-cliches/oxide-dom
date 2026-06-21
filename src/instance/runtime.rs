@@ -6,7 +6,7 @@ use parley::{Affinity, Cursor, Selection};
 use style_dom::ElementState;
 
 use super::{Instance, StylesheetId};
-use crate::events::{KeyboardEvent, MouseButton, MouseEvent};
+use crate::events::{KeyboardEvent, MouseButton, MouseEvent, TouchEvent, TouchPhase};
 use crate::img::ImgEvent;
 use crate::js::TickResult;
 use crate::renderer::{InputCaret, InputSelection};
@@ -14,6 +14,9 @@ use crate::scrollbar::{
     self, ScrollAxis, ScrollbarDrag, ScrollbarHit, ScrollbarTheme, collect_scrollbar_regions,
 };
 use crate::state::StateHandle;
+use crate::touch::{ActiveTouch, GestureMode, Momentum, TOUCH_HIT_SLOP};
+#[cfg(feature = "a11y")]
+use accesskit::{Action, ActionData, ActionRequest, Node as A11yNode, Role, Toggled, TreeUpdate};
 
 impl Instance {
     pub fn tick(&mut self) -> TickResult {
@@ -26,6 +29,14 @@ impl Instance {
         // `tick()` more often.
         let blink_flipped = self.advance_input_blink();
         if blink_flipped {
+            self.needs_paint = true;
+        }
+
+        // Advance any in-flight touch fling. Runs from inside tick() for the
+        // same reason as blink: hosts calling tick() each frame get momentum
+        // scrolling for free, and `next_wake_deadline()` keeps the loop awake
+        // while a fling is coasting.
+        if self.advance_touch_momentum() {
             self.needs_paint = true;
         }
 
@@ -82,7 +93,11 @@ impl Instance {
 
     /// Resolve layout and paint the document into the output texture.
     ///
-    /// Returns a reference to the [`wgpu::TextureView`] the host can composite.
+    /// Returns either:
+    /// - a reference to a GPU [`wgpu::TextureView`] when the `gpu` feature is
+    ///   enabled;
+    /// - raw RGBA pixel bytes when running in CPU mode.
+    #[cfg(feature = "gpu")]
     pub fn render(&mut self) -> &wgpu::TextureView {
         // Resolve CSS + layout.
         self.sync_input_render_text_before_layout();
@@ -127,7 +142,58 @@ impl Instance {
         &self.texture_view
     }
 
+    #[cfg(not(feature = "gpu"))]
+    pub fn render(&mut self) -> &[u8] {
+        // Resolve CSS + layout.
+        self.sync_input_render_text_before_layout();
+        self.doc.borrow_mut().resolve(0.0);
+        self.sync_input_render_text_before_layout();
+
+        // Compute scrollbar geometry from the resolved layout — final_layout
+        // and scroll_offset are now current. Reused by dispatch_mouse for
+        // scrollbar hit-testing this frame.
+        self.scrollbars = collect_scrollbar_regions(&self.doc.borrow());
+        let number_input_ids: Vec<usize> = {
+            let inputs = self.js.inputs.borrow();
+            inputs
+                .iter()
+                .filter(|(_, s)| s.is_number())
+                .map(|(&id, _)| id)
+                .collect()
+        };
+        self.spinners =
+            crate::spinner::collect_number_spinners(&self.doc.borrow(), &number_input_ids);
+        let input_selections = self.collect_input_selections();
+        let input_carets = self.collect_input_carets();
+
+        // Paint into the CPU buffer.
+        {
+            let mut doc = self.doc.borrow_mut();
+            let masked_focus = self.mask_blitz_text_input_focus_for_paint(&mut doc);
+            self.painter.paint(
+                &mut doc,
+                &self.scrollbars,
+                &input_selections,
+                &input_carets,
+                &self.spinners,
+                self.scrollbar_theme,
+                self.scale_factor,
+            );
+            self.restore_blitz_text_input_focus_after_paint(&mut doc, masked_focus);
+        }
+        self.needs_paint = false;
+
+        self.painter.pixel_bytes()
+    }
+
+    /// Access the instance CPU pixel output for the last paint (CPU mode).
+    #[cfg(not(feature = "gpu"))]
+    pub fn pixel_bytes(&self) -> &[u8] {
+        self.painter.pixel_bytes()
+    }
+
     /// Access the instance output texture backing the last paint.
+    #[cfg(feature = "gpu")]
     pub fn texture(&self) -> &wgpu::Texture {
         &self.texture
     }
@@ -142,26 +208,29 @@ impl Instance {
         let phys_w = ((width as f64) * self.scale_factor).round() as u32;
         let phys_h = ((height as f64) * self.scale_factor).round() as u32;
 
-        // Reallocate texture at physical pixel dimensions.
-        self.texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("solite"),
-            size: wgpu::Extent3d {
-                width: phys_w,
-                height: phys_h,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::COPY_DST
-                | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        });
-        self.texture_view = self
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
+        #[cfg(feature = "gpu")]
+        {
+            // Reallocate texture at physical pixel dimensions.
+            self.texture = self.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("solite"),
+                size: wgpu::Extent3d {
+                    width: phys_w,
+                    height: phys_h,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_DST
+                    | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            });
+            self.texture_view = self
+                .texture
+                .create_view(&wgpu::TextureViewDescriptor::default());
+        }
 
         // Update blitz viewport.
         let viewport = Viewport {
@@ -395,7 +464,7 @@ impl Instance {
         } = event
         {
             let (doc_x, doc_y) = self.document_coords_for_client(x, y);
-            if let Some(hit) = crate::spinner::hit_spinner(&self.spinners, doc_x, doc_y) {
+            if let Some(hit) = crate::spinner::hit_spinner(&self.spinners, doc_x, doc_y, 0.0) {
                 let (node_id, direction) = match hit {
                     crate::spinner::SpinnerHit::Up(id) => (id, 1i8),
                     crate::spinner::SpinnerHit::Down(id) => (id, -1i8),
@@ -916,6 +985,231 @@ impl Instance {
         result
     }
 
+    // ── Touch input ────────────────────────────────────────────────────────
+
+    /// Forward a single-finger touch event. See [`crate::touch`] for the
+    /// pan/tap/control model. solite tracks one finger at a time; events for a
+    /// second simultaneous finger are ignored.
+    pub fn dispatch_touch(&mut self, ev: TouchEvent) -> TickResult {
+        match ev.phase {
+            TouchPhase::Started => self.touch_started(ev),
+            TouchPhase::Moved => self.touch_moved(ev),
+            TouchPhase::Ended => self.touch_ended(ev),
+            TouchPhase::Cancelled => self.touch_cancelled(ev),
+        }
+    }
+
+    fn touch_started(&mut self, ev: TouchEvent) -> TickResult {
+        // A new finger pre-empts any coasting fling and any stuck gesture.
+        self.touch.momentum = None;
+        if self.touch.active.is_some() {
+            // Already tracking a finger — ignore additional touch points.
+            return TickResult::default();
+        }
+
+        let now = std::time::Instant::now();
+        let mode = self.classify_touch_start(ev.x, ev.y);
+        let result = match mode {
+            // A draggable control or tappable element: run the real mouse-down
+            // now so the slider/scrollbar engages and click/focus fire (solite
+            // dispatches `click` on press, not release).
+            GestureMode::Control => self.dispatch_mouse(
+                ev.x,
+                ev.y,
+                MouseEvent::Down {
+                    x: ev.x,
+                    y: ev.y,
+                    button: MouseButton::Left,
+                },
+            ),
+            // Plain/scrollable content: do nothing yet. We only know whether
+            // this is a tap or a scroll once the finger moves or lifts.
+            GestureMode::Pan { .. } => TickResult::default(),
+        };
+        self.touch.active = Some(ActiveTouch::new(ev.id, mode, ev.x, ev.y, now));
+        result
+    }
+
+    fn touch_moved(&mut self, ev: TouchEvent) -> TickResult {
+        let Some(mut active) = self.touch.active else {
+            return TickResult::default();
+        };
+        if active.id != ev.id {
+            return TickResult::default();
+        }
+        let now = std::time::Instant::now();
+        let (dx, dy) = active.record_move(ev.x, ev.y, now);
+        let result = match active.mode {
+            GestureMode::Control => {
+                self.dispatch_mouse(ev.x, ev.y, MouseEvent::Move { x: ev.x, y: ev.y })
+            }
+            GestureMode::Pan { node_id } => {
+                // Pan once past the slop threshold. Finger delta maps directly
+                // to scroll offset (drag down ⇒ content follows the finger).
+                if active.panned() && (dx != 0.0 || dy != 0.0) {
+                    self.doc
+                        .borrow_mut()
+                        .scroll_node_by(node_id, dx as f64, dy as f64, |_| {});
+                    self.needs_paint = true;
+                    TickResult {
+                        needs_paint: true,
+                        jobs_pending: false,
+                    }
+                } else {
+                    TickResult::default()
+                }
+            }
+        };
+        self.touch.active = Some(active);
+        result
+    }
+
+    fn touch_ended(&mut self, ev: TouchEvent) -> TickResult {
+        let Some(active) = self.touch.active else {
+            return TickResult::default();
+        };
+        if active.id != ev.id {
+            return TickResult::default();
+        }
+        self.touch.active = None;
+        let now = std::time::Instant::now();
+
+        match active.mode {
+            GestureMode::Control => self.dispatch_mouse(
+                ev.x,
+                ev.y,
+                MouseEvent::Up {
+                    x: ev.x,
+                    y: ev.y,
+                    button: MouseButton::Left,
+                },
+            ),
+            GestureMode::Pan { node_id } => {
+                if active.panned() {
+                    // A flick: hand the residual velocity to momentum scrolling.
+                    self.touch.momentum = Momentum::from_velocity(node_id, active.velocity(), now);
+                    if self.touch.momentum.is_some() {
+                        self.needs_paint = true;
+                        return TickResult {
+                            needs_paint: true,
+                            jobs_pending: false,
+                        };
+                    }
+                    TickResult::default()
+                } else {
+                    // No movement: it was a tap. Replay it as a real click
+                    // (down fires click/focus, up fires mouseup / clears :active).
+                    let down = self.dispatch_mouse(
+                        ev.x,
+                        ev.y,
+                        MouseEvent::Down {
+                            x: ev.x,
+                            y: ev.y,
+                            button: MouseButton::Left,
+                        },
+                    );
+                    let up = self.dispatch_mouse(
+                        ev.x,
+                        ev.y,
+                        MouseEvent::Up {
+                            x: ev.x,
+                            y: ev.y,
+                            button: MouseButton::Left,
+                        },
+                    );
+                    combine_tick_result(down, up)
+                }
+            }
+        }
+    }
+
+    fn touch_cancelled(&mut self, ev: TouchEvent) -> TickResult {
+        let Some(active) = self.touch.active else {
+            return TickResult::default();
+        };
+        if active.id != ev.id {
+            return TickResult::default();
+        }
+        self.touch.active = None;
+        // Release any control drag cleanly; drop pan gestures without a fling.
+        if matches!(active.mode, GestureMode::Control) {
+            return self.dispatch_mouse(
+                ev.x,
+                ev.y,
+                MouseEvent::Up {
+                    x: ev.x,
+                    y: ev.y,
+                    button: MouseButton::Left,
+                },
+            );
+        }
+        TickResult::default()
+    }
+
+    /// Classify a touch-down without mutating anything. Decides whether the
+    /// press should engage a control immediately ([`GestureMode::Control`]) or
+    /// be treated as the possible start of a scroll ([`GestureMode::Pan`]).
+    fn classify_touch_start(&self, x: f32, y: f32) -> GestureMode {
+        let (doc_x, doc_y) = self.document_coords_for_client(x, y);
+
+        // Overlay controls drawn on top of the document.
+        if scrollbar::hit_scrollbar(&self.scrollbars, doc_x, doc_y).is_some() {
+            return GestureMode::Control;
+        }
+        if crate::spinner::hit_spinner(&self.spinners, doc_x, doc_y, TOUCH_HIT_SLOP).is_some() {
+            return GestureMode::Control;
+        }
+
+        let Some(hit_id) = self.hit_node_id(x, y) else {
+            return GestureMode::Pan {
+                node_id: self.container_id,
+            };
+        };
+
+        // Native registered controls (inputs / selects) and open-popup options
+        // are always tappable.
+        if self.js.inputs.borrow().contains_key(&hit_id)
+            || self.js.selects.borrow().contains_key(&hit_id)
+            || self.popup_option_for_hit(hit_id).is_some()
+        {
+            return GestureMode::Control;
+        }
+
+        // Anything with an interactive handler in its ancestor chain.
+        let interactive = {
+            let doc = self.doc.borrow();
+            self.js.find_handler_up(&doc, hit_id, "click").is_some()
+                || self.js.find_handler_up(&doc, hit_id, "keydown").is_some()
+                || self.js.find_handler_up(&doc, hit_id, "focus").is_some()
+        };
+        if interactive {
+            return GestureMode::Control;
+        }
+
+        GestureMode::Pan { node_id: hit_id }
+    }
+
+    /// Integrate a coasting fling by one frame. Returns true if anything
+    /// scrolled (so `tick` can mark a repaint). Drops the momentum once it
+    /// decays below the stop threshold.
+    fn advance_touch_momentum(&mut self) -> bool {
+        let Some(mut momentum) = self.touch.momentum.take() else {
+            return false;
+        };
+        let now = std::time::Instant::now();
+        let (dx, dy) = momentum.step(now);
+        let scrolled = dx != 0.0 || dy != 0.0;
+        if scrolled {
+            self.doc
+                .borrow_mut()
+                .scroll_node_by(momentum.node_id, dx as f64, dy as f64, |_| {});
+        }
+        if momentum.is_alive() {
+            self.touch.momentum = Some(momentum);
+        }
+        scrolled
+    }
+
     // ── Keyboard input ─────────────────────────────────────────────────────
 
     /// Forward a key-down event to the focused node.
@@ -1325,14 +1619,18 @@ impl Instance {
         let content_y = input_origin.y + layout.border.top + layout.padding.top;
         let content_w = layout.content_box_width().max(0.0);
         let content_h = layout.content_box_height().max(1.0);
-        let y_offset = input_node.text_input_v_centering_offset(1.0) as f32;
-        let cursor_w = (cursor.x1 - cursor.x0).max(0.0) as f32;
-        let cursor_h = (cursor.y1 - cursor.y0).max(0.0) as f32;
+        // parley returns cursor geometry in physical pixels (set_scale(scale_factor)); divide
+        // back to CSS pixels so that paint_input_carets' Affine::scale(scale) converts correctly.
+        let sf = self.scale_factor as f32;
+        let y_offset = input_node.text_input_v_centering_offset(self.scale_factor) as f32;
+        let cursor_w = (cursor.x1 - cursor.x0).max(0.0) as f32 / sf;
+        let cursor_h = (cursor.y1 - cursor.y0).max(0.0) as f32 / sf;
 
         let (x, y, caret_w, caret_h) = if cursor_h > 0.0 {
             (
-                (content_x + cursor.x0 as f32).clamp(content_x, content_x + content_w),
-                (content_y + y_offset + cursor.y0 as f32).clamp(content_y, content_y + content_h),
+                (content_x + cursor.x0 as f32 / sf).clamp(content_x, content_x + content_w),
+                (content_y + y_offset + cursor.y0 as f32 / sf)
+                    .clamp(content_y, content_y + content_h),
                 cursor_w.max(1.0),
                 cursor_h.max(1.0),
             )
@@ -1393,7 +1691,9 @@ impl Instance {
         let content_y = input_origin.y + layout.border.top + layout.padding.top;
         let content_w = layout.content_box_width().max(0.0);
         let content_h = layout.content_box_height().max(1.0);
-        let y_offset = input_node.text_input_v_centering_offset(1.0) as f32;
+        // parley geometry is in physical pixels; divide to CSS pixels for the paint scale pass.
+        let sf = self.scale_factor as f32;
+        let y_offset = input_node.text_input_v_centering_offset(self.scale_factor) as f32;
 
         let display_text = state.render(true).0;
         let selection_start = char_index_to_byte_index(&display_text, selection_start_chars);
@@ -1407,12 +1707,12 @@ impl Instance {
 
         let mut selections = Vec::new();
         selection.geometry_with(layout_data, |rect, _line_idx| {
-            let x0 = (content_x + rect.x0 as f32).clamp(content_x, content_x + content_w);
-            let x1 = (content_x + rect.x1 as f32).clamp(content_x, content_x + content_w);
-            let y0 =
-                (content_y + y_offset + rect.y0 as f32).clamp(content_y, content_y + content_h);
-            let y1 =
-                (content_y + y_offset + rect.y1 as f32).clamp(content_y, content_y + content_h);
+            let x0 = (content_x + rect.x0 as f32 / sf).clamp(content_x, content_x + content_w);
+            let x1 = (content_x + rect.x1 as f32 / sf).clamp(content_x, content_x + content_w);
+            let y0 = (content_y + y_offset + rect.y0 as f32 / sf)
+                .clamp(content_y, content_y + content_h);
+            let y1 = (content_y + y_offset + rect.y1 as f32 / sf)
+                .clamp(content_y, content_y + content_h);
             let width = (x1 - x0).max(0.0);
             let height = (y1 - y0).max(0.0);
             if width <= 0.0 || height <= 0.0 {
@@ -1513,6 +1813,193 @@ impl Instance {
         Some(state.next_blink_at())
     }
 
+    /// Earliest instant the host should wake to keep animations running: the
+    /// caret-blink deadline, or "right now" while a touch fling is coasting (so
+    /// `tick()` keeps integrating momentum every frame). `None` means the host
+    /// can idle until the next input event. Prefer this over
+    /// [`next_blink_deadline`](Self::next_blink_deadline) in the event loop.
+    pub fn next_wake_deadline(&self) -> Option<std::time::Instant> {
+        let blink = self.next_blink_deadline();
+        if self.touch.momentum.is_some() {
+            let now = std::time::Instant::now();
+            return Some(blink.map_or(now, |b| b.min(now)));
+        }
+        blink
+    }
+
+    /// Build an enriched [`accesskit::TreeUpdate`] for the current document.
+    ///
+    /// Starts from blitz's structural tree (parent/child links + text runs)
+    /// and layers on the semantics that live in solite rather than the DOM:
+    /// live control state from the input/select registries (checked, value,
+    /// slider min/max/now, disabled, read-only) plus DOM-derived ARIA
+    /// (`aria-label`, `role=`, `<a href>`→link, …) and the actions each node
+    /// supports so an assistive technology can drive it. The reported focus is
+    /// solite's `focused_node_id`, the source of truth for focus.
+    #[cfg(feature = "a11y")]
+    pub fn accessibility_tree(&self) -> TreeUpdate {
+        use accesskit::NodeId;
+
+        let doc = self.doc.borrow();
+        let mut update = doc.build_accessibility_tree();
+        let inputs = self.js.inputs.borrow();
+        let selects = self.js.selects.borrow();
+
+        for (node_id, node) in update.nodes.iter_mut() {
+            if node_id.0 == u64::MAX {
+                continue;
+            }
+            let id = node_id.0 as usize;
+
+            // Registry-backed live state takes priority over the DOM.
+            if let Some(state) = inputs.get(&id) {
+                enrich_input_a11y_node(node, state);
+            } else if let Some(state) = selects.get(&id) {
+                node.set_role(Role::ComboBox);
+                node.set_value(state.current_label());
+                node.add_action(Action::Focus);
+                node.add_action(Action::Click);
+                node.add_action(Action::Expand);
+                node.add_action(Action::Collapse);
+                if state.disabled() {
+                    node.set_disabled();
+                }
+            }
+
+            // DOM-derived ARIA / intrinsic semantics.
+            if let Some(element) = doc.get_node(id).and_then(|n| n.element_data()) {
+                enrich_a11y_node_from_attrs(node, element);
+            }
+        }
+
+        update.focus = NodeId(self.focused_node_id.map_or(u64::MAX, |id| id as u64));
+        update
+    }
+
+    /// Apply an assistive-technology action request (from `accesskit_winit`)
+    /// onto the live document. Mirrors how the same interaction would arrive
+    /// from a pointer/keyboard so JS handlers and registry state stay in sync.
+    #[cfg(feature = "a11y")]
+    pub fn perform_accessibility_action(&mut self, req: &ActionRequest) -> TickResult {
+        if req.target_node.0 == u64::MAX {
+            return TickResult::default();
+        }
+        let node_id = req.target_node.0 as usize;
+        let (cx, cy) = self.node_center_client(node_id).unwrap_or((0.0, 0.0));
+
+        match req.action {
+            Action::Focus => self.set_focused_node(Some(node_id), cx, cy),
+            Action::Blur => self.set_focused_node(None, cx, cy),
+            Action::Increment => self.step_number_input(node_id, 1).unwrap_or_default(),
+            Action::Decrement => self.step_number_input(node_id, -1).unwrap_or_default(),
+            Action::SetValue => match &req.data {
+                Some(ActionData::Value(value)) => self.set_input_value_via_a11y(node_id, value),
+                Some(ActionData::NumericValue(value)) => {
+                    self.set_input_value_via_a11y(node_id, &value.to_string())
+                }
+                _ => TickResult::default(),
+            },
+            Action::Click | Action::Expand | Action::Collapse => {
+                self.activate_node_via_a11y(node_id, cx, cy)
+            }
+            Action::ScrollIntoView => {
+                self.doc
+                    .borrow_mut()
+                    .scroll_node_by(node_id, 0.0, 0.0, |_| {});
+                self.needs_paint = true;
+                TickResult {
+                    needs_paint: true,
+                    jobs_pending: false,
+                }
+            }
+            _ => TickResult::default(),
+        }
+    }
+
+    /// Center of a node's border box in client (window) pixels, used to aim
+    /// synthesized pointer events from accessibility actions.
+    #[cfg(feature = "a11y")]
+    fn node_center_client(&self, node_id: usize) -> Option<(f32, f32)> {
+        let doc = self.doc.borrow();
+        let node = doc.get_node(node_id)?;
+        let abs = node.absolute_position(0.0, 0.0);
+        let size = node.final_layout.size;
+        let scroll = doc.viewport_scroll();
+        Some((
+            abs.x + size.width / 2.0 - scroll.x as f32,
+            abs.y + size.height / 2.0 - scroll.y as f32,
+        ))
+    }
+
+    /// Activate a node from an accessibility Click/Expand/Collapse: toggle a
+    /// checkbox/radio, open a select, else synthesize a pointer click at its
+    /// center so JS click handlers fire normally.
+    #[cfg(feature = "a11y")]
+    fn activate_node_via_a11y(&mut self, node_id: usize, cx: f32, cy: f32) -> TickResult {
+        if self
+            .js
+            .inputs
+            .borrow()
+            .get(&node_id)
+            .is_some_and(|s| s.is_checked_like())
+        {
+            return self.handle_checked_input_click(node_id);
+        }
+        if self.js.selects.borrow().contains_key(&node_id) {
+            return self.handle_select_click(node_id);
+        }
+        let down = self.dispatch_mouse(
+            cx,
+            cy,
+            MouseEvent::Down {
+                x: cx,
+                y: cy,
+                button: MouseButton::Left,
+            },
+        );
+        let up = self.dispatch_mouse(
+            cx,
+            cy,
+            MouseEvent::Up {
+                x: cx,
+                y: cy,
+                button: MouseButton::Left,
+            },
+        );
+        combine_tick_result(down, up)
+    }
+
+    /// Set a text/number/range input's value from an accessibility SetValue
+    /// action and fire the matching `input` event.
+    #[cfg(feature = "a11y")]
+    fn set_input_value_via_a11y(&mut self, node_id: usize, value: &str) -> TickResult {
+        {
+            let mut inputs = self.js.inputs.borrow_mut();
+            let Some(state) = inputs.get_mut(&node_id) else {
+                return TickResult::default();
+            };
+            if state.disabled() || state.readonly() {
+                return TickResult::default();
+            }
+            state.set_value(value);
+        }
+        self.refresh_input_text(node_id);
+        let snapshot = self.js.inputs.borrow().get(&node_id).map(|s| {
+            (
+                s.value().to_string(),
+                s.checked(),
+                s.selection_start(),
+                s.selection_end(),
+            )
+        });
+        let Some((value, checked, sel_start, sel_end)) = snapshot else {
+            return TickResult::default();
+        };
+        self.needs_paint = true;
+        self.js
+            .dispatch_input_event(node_id, &value, checked, sel_start, sel_end)
+    }
+
     /// A `Notify` handle that fires whenever an async source (e.g. a tokio task
     /// calling `StateHandle::set`) mutates state. The host can await this to
     /// know when to schedule a tick.
@@ -1588,6 +2075,32 @@ impl Instance {
         };
 
         id
+    }
+
+    /// Reload imported CSS module files that were registered by `import
+    /// "./style.css"` without remounting the component tree.
+    ///
+    /// Returns `true` when at least one imported stylesheet was matched and
+    /// replaced. Paths that are not currently imported are ignored.
+    pub fn reload_imported_stylesheets(
+        &mut self,
+        paths: impl IntoIterator<Item = impl AsRef<std::path::Path>>,
+    ) -> bool {
+        let mut changed = false;
+        for path in paths {
+            match self.js.reload_imported_stylesheet(path.as_ref()) {
+                Ok(true) => changed = true,
+                Ok(false) => {}
+                Err(err) => eprintln!(
+                    "failed to reload imported stylesheet {}: {err}",
+                    path.as_ref().display()
+                ),
+            }
+        }
+        if changed {
+            self.needs_paint = true;
+        }
+        changed
     }
 
     // ── Native inputs ────────────────────────────────────────────────────────
@@ -1954,6 +2467,129 @@ fn apply_input_key(
         }
         _ => (false, false),
     }
+}
+
+/// Layer live `<input>` state onto its accessibility node: role, toggled /
+/// numeric value, disabled/read-only flags, and the actions it supports.
+#[cfg(feature = "a11y")]
+fn enrich_input_a11y_node(node: &mut A11yNode, state: &crate::input::InputState) {
+    node.add_action(Action::Focus);
+    if state.disabled() {
+        node.set_disabled();
+    }
+    if state.readonly() {
+        node.set_read_only();
+    }
+
+    if state.is_checked_like() {
+        node.set_role(if state.is_radio() {
+            Role::RadioButton
+        } else {
+            Role::CheckBox
+        });
+        node.set_toggled(if state.checked() {
+            Toggled::True
+        } else {
+            Toggled::False
+        });
+        node.add_action(Action::Click);
+    } else if state.is_range() || state.is_number() {
+        node.set_role(if state.is_range() {
+            Role::Slider
+        } else {
+            Role::NumberInput
+        });
+        if let Some(value) = state.numeric_value() {
+            node.set_numeric_value(value);
+        }
+        if let Some(min) = state.min() {
+            node.set_min_numeric_value(min);
+        }
+        if let Some(max) = state.max() {
+            node.set_max_numeric_value(max);
+        }
+        node.set_numeric_value_step(state.step());
+        node.add_action(Action::Increment);
+        node.add_action(Action::Decrement);
+        node.add_action(Action::SetValue);
+    } else {
+        node.set_role(Role::TextInput);
+        // Don't leak masked content; expose the real value for plain text.
+        if !state.is_password() {
+            node.set_value(state.value());
+        }
+        if let Some(placeholder) = state.placeholder() {
+            node.set_placeholder(placeholder);
+        }
+        node.add_action(Action::SetValue);
+    }
+}
+
+/// Apply DOM-derived ARIA semantics (attributes + intrinsic element role) onto
+/// an accessibility node.
+#[cfg(feature = "a11y")]
+fn enrich_a11y_node_from_attrs(node: &mut A11yNode, element: &blitz_dom::ElementData) {
+    let mut has_href = false;
+    for attr in element.attrs.iter() {
+        let value: &str = attr.value.as_ref();
+        match attr.name.local.as_ref() {
+            "aria-label" if !value.is_empty() => node.set_label(value),
+            "aria-hidden" if aria_truthy(value) => node.set_hidden(),
+            "aria-disabled" if aria_truthy(value) => node.set_disabled(),
+            "aria-checked" => match value {
+                "true" => node.set_toggled(Toggled::True),
+                "mixed" => node.set_toggled(Toggled::Mixed),
+                "false" => node.set_toggled(Toggled::False),
+                _ => {}
+            },
+            "role" => {
+                if let Some(role) = aria_role(value) {
+                    node.set_role(role);
+                }
+            }
+            "placeholder" if !value.is_empty() => node.set_placeholder(value),
+            "href" => has_href = true,
+            _ => {}
+        }
+    }
+
+    match element.name.local.as_ref() {
+        "a" if has_href => {
+            node.set_role(Role::Link);
+            node.add_action(Action::Click);
+            node.add_action(Action::Focus);
+        }
+        "button" => {
+            node.add_action(Action::Click);
+            node.add_action(Action::Focus);
+        }
+        _ => {}
+    }
+}
+
+/// WAI-ARIA boolean attribute truthiness (`"true"` ⇒ true; absent/`"false"` ⇒
+/// false).
+#[cfg(feature = "a11y")]
+fn aria_truthy(value: &str) -> bool {
+    value.eq_ignore_ascii_case("true")
+}
+
+/// Map a subset of explicit ARIA `role=` strings to accesskit roles.
+#[cfg(feature = "a11y")]
+fn aria_role(value: &str) -> Option<Role> {
+    Some(match value {
+        "button" => Role::Button,
+        "link" => Role::Link,
+        "checkbox" => Role::CheckBox,
+        "radio" => Role::RadioButton,
+        "slider" => Role::Slider,
+        "heading" => Role::Heading,
+        "listbox" => Role::ListBox,
+        "option" => Role::ListBoxOption,
+        "combobox" => Role::ComboBox,
+        "textbox" => Role::TextInput,
+        _ => return None,
+    })
 }
 
 fn combine_tick_result(a: TickResult, b: TickResult) -> TickResult {

@@ -273,7 +273,7 @@ fn combine_tick_result(a: TickResult, b: TickResult) -> TickResult {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "gpu"))]
 mod tests {
     use super::*;
     use crate::{InstanceConfig, StateHandle};
@@ -371,7 +371,7 @@ mod tests {
                 document_scroll: false,
                 base_url: None,
                 initial_state: None,
-            registered_resources: vec![],
+                registered_resources: vec![],
                 scale_factor: 1.0,
             },
             TWO_INPUT_COMPONENT,

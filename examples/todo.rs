@@ -1,15 +1,17 @@
 use std::sync::Arc;
 
+#[path = "common/gpu.rs"]
+mod gpu;
+
 use blitz_traits::shell::{ClipboardError, ShellProvider};
 #[cfg(feature = "jsx-compiler")]
 use solite::compile_component_source;
 use solite::{
     Instance, InstanceConfig, Scene, SurfaceRect,
-    gpu::{BlitContext, BlitDraw, present_to_surface},
+    gpu::{BlitDraw, present_to_surface},
     winit::WinitBridge,
 };
 use winit::application::ApplicationHandler;
-use winit::dpi::PhysicalPosition;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
@@ -34,19 +36,19 @@ impl ShellProvider for SystemClipboard {
     }
 }
 
-struct Gpu {
-    device: Arc<wgpu::Device>,
-    queue: Arc<wgpu::Queue>,
-    surface: wgpu::Surface<'static>,
-    config: wgpu::SurfaceConfiguration,
-    blit: BlitContext,
-}
+type Gpu = gpu::Gpu;
 
 struct App {
     window: Option<Arc<Window>>,
     gpu: Option<Gpu>,
     bridge: WinitBridge,
     scene: Option<Scene<()>>,
+}
+
+impl App {
+    fn logical_size(&self, width: u32, height: u32) -> (u32, u32) {
+        self.bridge.to_logical_size(width, height)
+    }
 }
 
 impl ApplicationHandler for App {
@@ -56,32 +58,27 @@ impl ApplicationHandler for App {
             .with_inner_size(winit::dpi::LogicalSize::new(540u32, 800u32));
         let window = Arc::new(event_loop.create_window(attrs).expect("window"));
 
-        let gpu = pollster::block_on(init_gpu(window.clone()));
-        let (width, height) = {
-            let scale = window.scale_factor().max(1.0);
-            let w = (gpu.config.width as f64 / scale).max(1.0).round() as u32;
-            let h = (gpu.config.height as f64 / scale).max(1.0).round() as u32;
-            (w, h)
-        };
+        let gpu = pollster::block_on(gpu::init_gpu(window.clone(), "solite-todo-device"));
+        // The bridge owns the scale factor and the physical→logical math.
+        self.bridge.set_scale_factor(window.scale_factor());
+        let (width, height) = self.logical_size(gpu.config.width, gpu.config.height);
 
-        #[cfg(feature = "jsx-compiler")]
-        let todo_js = compile_component_source(std::path::Path::new("App.jsx"), TODO_JSX)
-            .expect("JSX compile failed");
-        #[cfg(not(feature = "jsx-compiler"))]
-        panic!("todo example requires the `jsx-compiler` feature");
+        let todo_js = todo_component_source();
 
         let (mut instance, _rx) = Instance::new(
             InstanceConfig {
                 width,
                 height,
+                #[cfg(feature = "gpu")]
                 device: gpu.device.clone(),
+                #[cfg(feature = "gpu")]
                 queue: gpu.queue.clone(),
                 stylesheets: vec![TODO_CSS.to_string()],
                 document_scroll: true,
                 base_url: None,
                 initial_state: None,
-            registered_resources: vec![],
-                scale_factor: 1.0,
+                registered_resources: vec![],
+                scale_factor: self.bridge.scale_factor(),
             },
             &todo_js,
         )
@@ -147,18 +144,19 @@ impl ApplicationHandler for App {
             }
 
             WindowEvent::Resized(size) => {
+                if let Some(window) = self.window.as_ref() {
+                    self.bridge.set_scale_factor(window.scale_factor());
+                }
+                let (width, height) = self.logical_size(size.width, size.height);
                 if let (Some(gpu), Some(scene), Some(window)) =
                     (self.gpu.as_mut(), self.scene.as_mut(), self.window.as_ref())
                 {
-                    let scale = window.scale_factor().max(1.0);
-                    let width = (size.width as f64 / scale).max(1.0).round() as u32;
-                    let height = (size.height as f64 / scale).max(1.0).round() as u32;
-
                     gpu.config.width = size.width.max(1);
                     gpu.config.height = size.height.max(1);
                     gpu.surface.configure(&gpu.device, &gpu.config);
 
                     for surface in scene.surfaces_mut() {
+                        surface.rect = SurfaceRect::new(0.0, 0.0, width as f32, height as f32);
                         surface.instance.resize(width, height);
                     }
 
@@ -168,22 +166,7 @@ impl ApplicationHandler for App {
 
             event => {
                 if let Some(scene) = self.scene.as_mut() {
-                    let scale = self
-                        .window
-                        .as_ref()
-                        .map(|w| w.scale_factor())
-                        .unwrap_or(1.0);
-                    let translated = match event {
-                        WindowEvent::CursorMoved {
-                            device_id,
-                            position,
-                        } => WindowEvent::CursorMoved {
-                            device_id,
-                            position: PhysicalPosition::new(position.x / scale, position.y / scale),
-                        },
-                        other => other,
-                    };
-                    let r = self.bridge.handle(scene, &translated);
+                    let r = self.bridge.handle(scene, &event);
                     if r.close_requested {
                         event_loop.exit();
                         return;
@@ -229,72 +212,6 @@ impl ApplicationHandler for App {
     }
 }
 
-async fn init_gpu(window: Arc<Window>) -> Gpu {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::all(),
-        ..wgpu::InstanceDescriptor::new_without_display_handle()
-    });
-    let surface = instance.create_surface(window.clone()).expect("surface");
-
-    let adapter = instance
-        .request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::None,
-            compatible_surface: Some(&surface),
-            force_fallback_adapter: false,
-        })
-        .await
-        .expect("adapter");
-
-    let (device, queue) = adapter
-        .request_device(&wgpu::DeviceDescriptor {
-            label: Some("solite-todo-device"),
-            required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::default(),
-            experimental_features: wgpu::ExperimentalFeatures::disabled(),
-            memory_hints: wgpu::MemoryHints::default(),
-            trace: wgpu::Trace::Off,
-        })
-        .await
-        .expect("device");
-
-    let size = window.inner_size();
-    let caps = surface.get_capabilities(&adapter);
-    let format = caps
-        .formats
-        .iter()
-        .copied()
-        .find(|f| f.is_srgb())
-        .unwrap_or(caps.formats[0]);
-    let alpha_mode = caps
-        .alpha_modes
-        .iter()
-        .copied()
-        .find(|mode| *mode == wgpu::CompositeAlphaMode::Opaque)
-        .or_else(|| caps.alpha_modes.first().copied())
-        .unwrap_or(wgpu::CompositeAlphaMode::Opaque);
-
-    let config = wgpu::SurfaceConfiguration {
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-        format,
-        width: size.width.max(1),
-        height: size.height.max(1),
-        present_mode: wgpu::PresentMode::AutoVsync,
-        alpha_mode,
-        view_formats: vec![],
-        desired_maximum_frame_latency: 2,
-    };
-    surface.configure(&device, &config);
-    let blit = BlitContext::new(&device, config.format);
-
-    Gpu {
-        device: Arc::new(device),
-        queue: Arc::new(queue),
-        surface,
-        config,
-        blit,
-    }
-}
-
 fn main() {
     let event_loop = EventLoop::new().expect("event loop");
     let mut app = App {
@@ -304,4 +221,14 @@ fn main() {
         scene: None,
     };
     event_loop.run_app(&mut app).expect("run");
+}
+
+#[cfg(feature = "jsx-compiler")]
+fn todo_component_source() -> String {
+    compile_component_source(std::path::Path::new("App.jsx"), TODO_JSX).expect("JSX compile failed")
+}
+
+#[cfg(not(feature = "jsx-compiler"))]
+fn todo_component_source() -> String {
+    panic!("todo example requires the `jsx-compiler` feature");
 }

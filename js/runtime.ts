@@ -397,6 +397,31 @@ const classListToString = (value: unknown): string => {
     .join(" ");
 };
 
+// Track attributes we've already warned about so a list of N offending rows
+// produces one message, not N. The branch fires at element creation, not per
+// frame, so this only guards against repeated component instances.
+const warnedAttributeFns = new Set<string>();
+
+const warnUncalledAttributeFn = (name: string): void => {
+  const warn = (globalThis as any).__sol_dev_warn;
+  // `__sol_dev_warn` is only installed in debug builds; optional chaining keeps
+  // this zero-cost (the template literal is not built) in release.
+  if (typeof warn !== "function" || warnedAttributeFns.has(name)) {
+    return;
+  }
+  warnedAttributeFns.add(name);
+  const message =
+    `attribute \`${name}\` was given a function instead of a value, so it is ` +
+    `applied once and never updates. Call the getter in the attribute — e.g. ` +
+    `\`${name}={fn()}\` not \`${name}={fn}\` — so it is wrapped in a reactive effect.`;
+  warn(message);
+  // Mirror into a global array for host/test introspection. Only reached in
+  // dev builds (guarded by the host binding above), so release stays clean.
+  const sink = ((globalThis as any).__sol_dev_warnings =
+    (globalThis as any).__sol_dev_warnings || []);
+  sink.push(message);
+};
+
 const applyRuntimeProperty = (
   node: NodeHandle | number,
   name: string,
@@ -417,6 +442,12 @@ const applyRuntimeProperty = (
   }
 
   if (typeof value === "function" && event == null) {
+    // A function reaching a non-event, non-ref attribute means it was passed by
+    // reference (`attr={fn}`) instead of called (`attr={fn()}`). The compiler
+    // only wraps call/member expressions in a reactive effect, so the bare-
+    // reference form is applied once and never updates. Warn (dev builds only),
+    // then degrade gracefully by calling it once.
+    warnUncalledAttributeFn(name);
     value = (value as () => unknown)();
   }
 
